@@ -1,7 +1,8 @@
 "use client";
 
-// «أنا» — في المرحلة 0 تعمل كمبدّل دور (زائر/مسجّل/أدمن) وإدارة البيانات المحلية.
-// المصادقة الحقيقية (اسم مستخدم + كلمة مرور فوق Supabase Auth) في المرحلة التالية.
+// «أنا» — مبدّل دور (زائر/مسجّل/أدمن) محفوظ على هذا الجهاز، وحالة المزامنة
+// مع القاعدة. المصادقة الحقيقية (اسم مستخدم + كلمة مرور فوق Supabase Auth)
+// في المرحلة التالية.
 
 import Link from "next/link";
 import { useState } from "react";
@@ -15,7 +16,7 @@ const ROLES: { role: Role; label: string; desc: string; icon: string }[] = [
 ];
 
 export default function MePage() {
-  const { state, setRole, loadDemo, resetAll, hydrated } = useLeague();
+  const { state, setRole, resetAll, hydrated, pendingWrites } = useLeague();
   const [confirmReset, setConfirmReset] = useState(false);
   if (!hydrated) return null;
 
@@ -68,19 +69,36 @@ export default function MePage() {
         </div>
       ) : null}
 
-      <SectionTitle>البيانات المحلية</SectionTitle>
+      <SectionTitle>المزامنة</SectionTitle>
+      <div
+        className="card mb-4 flex items-center gap-2.5 px-3.5 py-3"
+        style={
+          pendingWrites > 0
+            ? { borderColor: "rgba(244,196,48,.5)", background: "rgba(244,196,48,.07)" }
+            : undefined
+        }
+      >
+        <span className="text-[18px]">{pendingWrites > 0 ? "⏳" : "☁️"}</span>
+        <span className="flex-1 text-[13.5px] font-semibold text-white">
+          {pendingWrites > 0 ? (
+            <>
+              <span className="num">{pendingWrites}</span> عملية بانتظار الشبكة
+            </>
+          ) : (
+            "كل البيانات متزامنة مع السحابة"
+          )}
+        </span>
+        <span className="text-[12px]" style={{ color: "var(--text-3)" }}>
+          {pendingWrites > 0 ? "تُرسل تلقائيًا عند عودة الاتصال" : "النتائج تظهر لكل الأجهزة فورًا"}
+        </span>
+      </div>
+
+      <SectionTitle>هذا الجهاز</SectionTitle>
       <div className="mb-2 flex flex-col gap-2 pb-6">
-        <button
-          onClick={loadDemo}
-          className="flex h-12 items-center justify-center rounded-[13px] text-[14px] font-bold"
-          style={{ background: "rgba(43,79,194,.2)", border: "1px solid rgba(43,79,194,.5)", color: "var(--text-1)" }}
-        >
-          🎬 تعبئة بيانات تجريبية (ليلة 21/8 + مباراة مباشرة)
-        </button>
         {confirmReset ? (
           <div className="card flex items-center gap-2 p-3">
             <span className="flex-1 text-[13px] font-semibold" style={{ color: "var(--live)" }}>
-              حذف كل الأحداث والنتائج المسجلة نهائيًا؟
+              إعادة ضبط هذا الجهاز؟ (نتائج الدوري في السحابة لن تُمس)
             </span>
             <button
               onClick={() => {
@@ -90,7 +108,7 @@ export default function MePage() {
               className="pill px-3 py-1.5 text-[13px] font-bold text-white"
               style={{ background: "var(--live)" }}
             >
-              نعم، امسح
+              نعم، أعد الضبط
             </button>
             <button onClick={() => setConfirmReset(false)} className="pill px-3 py-1.5 text-[13px] font-semibold" style={{ background: "rgba(255,255,255,.08)", color: "var(--text-2)" }}>
               تراجع
@@ -102,13 +120,14 @@ export default function MePage() {
             className="flex h-12 items-center justify-center rounded-[13px] text-[14px] font-bold"
             style={{ background: "rgba(229,72,77,.1)", border: "1px solid rgba(229,72,77,.35)", color: "var(--live)" }}
           >
-            🗑️ مسح كل البيانات والبدء من جديد
+            🗑️ إعادة ضبط هذا الجهاز (الدور المختار)
           </button>
         )}
         <p className="pt-1 text-center text-[12px] leading-relaxed" style={{ color: "var(--text-3)" }}>
-          المرحلة 0: البيانات محفوظة محليًا على هذا الجهاز (localStorage).
+          نتائج الدوري والمباريات والمجتمع محفوظة في السحابة ويراها الجميع.
           <br />
-          الحسابات والمزامنة السحابية (Supabase) في المرحلة التالية — المواصفة §8.
+          المحفوظ على هذا الجهاز: الدور المختار فقط. الحسابات (اسم مستخدم
+          وكلمة مرور) في المرحلة التالية — المواصفة §8.
         </p>
       </div>
     </div>

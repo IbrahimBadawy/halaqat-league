@@ -28,13 +28,16 @@ import {
 import { computeTeamSuspensions } from "../discipline/suspensions";
 import { supabase } from "../supabase/client";
 import {
+  deviceKey,
   emptyLive,
   fetchRemote,
   liveWrite,
+  queueWrite,
   type CardUsageLite,
   type RemoteIds,
   type RemoteLive,
 } from "./remote";
+import { pendingWrites, startQueue, subscribeQueue } from "./queue";
 import type { ActivePowerCard, ClockState } from "./live-types";
 import type {
   AuditEntry,
@@ -78,10 +81,9 @@ export interface PersistedState {
   starters: Record<string, Record<string, string[]>>;
 }
 
+/** ما يبقى خاصًا بالجهاز: الدور فقط (التوقعات والمنشورات صارت في القاعدة) */
 interface LocalState {
   role: Role;
-  predictions: Record<string, Prediction>;
-  posts: Post[];
 }
 
 const LOCAL_KEY = "halaqat-league-local-v1";
@@ -89,7 +91,7 @@ const LEGACY_KEY = "halaqat-league-v1";
 const ADMIN_PIN = "1234";
 
 function initialLocal(): LocalState {
-  return { role: "visitor", predictions: {}, posts: [] };
+  return { role: "visitor" };
 }
 
 function freshClock(): ClockState {
@@ -139,6 +141,9 @@ export interface LeagueStore {
   benchPlayers: (matchId: string, teamCode: string) => Player[];
 
   /** تعارضات الجدول الحالية كلها (ملعب محجوز، فريق مزدوج، فجوة، إتاحة) */
+  /** كتابات لم تصل القاعدة بعد (انقطاع شبكة) — تُرسل تلقائيًا عند العودة */
+  pendingWrites: number;
+
   scheduleConflicts: ScheduleConflict[];
   conflictsOf: (matchId: string) => ScheduleConflict[];
   /** أقرب (يوم/فترة/ملعب) خالٍ من التعارضات لهذه المباراة */
@@ -187,6 +192,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
   const [local, setLocal] = useState<LocalState>(initialLocal);
   const [hydrated, setHydrated] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [pending, setPending] = useState(0);
 
   const liveRef = useRef(live);
   liveRef.current = live;
@@ -206,23 +212,29 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  // تحميل الحالة المحلية (الدور/التوقعات/المنشورات) ثم الجلب الأول من القاعدة
+  // طابور الكتابة: يستأنف ما لم يُرسل من جلسة سابقة ويعيد المحاولة تلقائيًا
+  useEffect(() => {
+    const stop = startQueue(liveWrite);
+    const unsub = subscribeQueue(setPending);
+    setPending(pendingWrites());
+    return () => {
+      unsub();
+      stop();
+    };
+  }, []);
+
+  // تحميل الدور المحفوظ على الجهاز ثم الجلب الأول من القاعدة
   useEffect(() => {
     try {
       const raw = localStorage.getItem(LOCAL_KEY);
       if (raw) {
         setLocal((s) => ({ ...s, ...(JSON.parse(raw) as Partial<LocalState>) }));
       } else {
-        // ترحيل من مخزن المرحلة المحلية القديم — الأجزاء الخاصة بالجهاز فقط
+        // ترحيل الدور من مخزن المرحلة المحلية القديم
         const legacy = localStorage.getItem(LEGACY_KEY);
         if (legacy) {
           const p = JSON.parse(legacy) as Partial<PersistedState>;
-          setLocal((s) => ({
-            ...s,
-            role: p.role ?? s.role,
-            predictions: p.predictions ?? {},
-            posts: p.posts ?? [],
-          }));
+          if (p.role) setLocal((s) => ({ ...s, role: p.role! }));
         }
       }
     } catch {
@@ -340,8 +352,8 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
       usedCards,
       audit: live.audit,
       fixtureOverrides: {},
-      predictions: local.predictions,
-      posts: local.posts,
+      predictions: live.predictions,
+      posts: live.posts,
       starters: live.starters,
     }),
     [local, live, lineupOverrides, activeCards, usedCards],
@@ -597,7 +609,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     setLive((l) => ({ ...l, audit: [entry, ...l.audit].slice(0, 300) }));
     const ids = idsRef.current;
     if (ids) {
-      void liveWrite("insert_audit", {
+      queueWrite("insert_audit", {
         entry: {
           league_id: ids.leagueId,
           actor_role: entry.actor,
@@ -614,7 +626,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     (matchId: string, patch: Record<string, unknown>) => {
       const ids = idsRef.current;
       if (!ids) return;
-      void liveWrite("update_match", { id: ids.matchByCode[matchId], patch });
+      queueWrite("update_match", { id: ids.matchByCode[matchId], patch });
     },
     [],
   );
@@ -643,7 +655,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     (u: CardUsageLite, patch?: { minute?: number; appliedAt?: number }) => {
       const ids = idsRef.current;
       if (!ids || !u.teamCardId) return;
-      void liveWrite("upsert_card_usage", {
+      queueWrite("upsert_card_usage", {
         usage: {
           id: u.id,
           team_card_id: u.teamCardId,
@@ -725,7 +737,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
         if (patch.matchDay) dbPatch.match_day = patch.matchDay;
         if (patch.slot) dbPatch.slot = patch.slot;
         if (patch.venue) dbPatch.venue_id = ids.venueByName[patch.venue];
-        void liveWrite("update_match", { id: ids.matchByCode[matchId], patch: dbPatch });
+        queueWrite("update_match", { id: ids.matchByCode[matchId], patch: dbPatch });
       }
       const detail = [
         patch.matchDay ? `الليلة ← ${patch.matchDay}` : null,
@@ -739,29 +751,44 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     [pushAudit],
   );
 
-  const setPrediction = useCallback(
-    (matchId: string, p: Prediction) =>
-      setLocal((s) => ({ ...s, predictions: { ...s.predictions, [matchId]: p } })),
-    [],
-  );
+  const setPrediction = useCallback((matchId: string, p: Prediction) => {
+    setLive((l) => ({ ...l, predictions: { ...l.predictions, [matchId]: p } }));
+    const ids = idsRef.current;
+    if (!ids) return;
+    queueWrite("upsert_prediction", {
+      prediction: {
+        league_id: ids.leagueId,
+        match_id: ids.matchByCode[matchId],
+        device_key: deviceKey(),
+        home: p.home,
+        away: p.away,
+      },
+    });
+  }, []);
 
-  const addPost = useCallback(
-    (author: string, text: string) =>
-      setLocal((s) => ({
-        ...s,
-        posts: [{ id: newId("p"), author, text, at: Date.now(), likes: 0 }, ...s.posts].slice(0, 200),
-      })),
-    [],
-  );
+  const addPost = useCallback((author: string, text: string) => {
+    const ids = idsRef.current;
+    const post: Post = { id: eventUuid(), author, text, at: Date.now(), likes: 0 };
+    setLive((l) => ({ ...l, posts: [post, ...l.posts].slice(0, 200) }));
+    if (!ids) return;
+    queueWrite("insert_post", {
+      post: {
+        id: post.id,
+        league_id: ids.leagueId,
+        author_name: author,
+        text,
+        created_at: new Date(post.at).toISOString(),
+      },
+    });
+  }, []);
 
-  const likePost = useCallback(
-    (postId: string) =>
-      setLocal((s) => ({
-        ...s,
-        posts: s.posts.map((p) => (p.id === postId ? { ...p, likes: p.likes + 1 } : p)),
-      })),
-    [],
-  );
+  const likePost = useCallback((postId: string) => {
+    setLive((l) => ({
+      ...l,
+      posts: l.posts.map((p) => (p.id === postId ? { ...p, likes: p.likes + 1 } : p)),
+    }));
+    queueWrite("like_post", { id: postId });
+  }, []);
 
   const setStarters = useCallback(
     (matchId: string, teamCode: string, playerIds: string[]) => {
@@ -774,7 +801,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
       }));
       const ids = idsRef.current;
       if (ids) {
-        void liveWrite("set_starters", {
+        queueWrite("set_starters", {
           match_id: ids.matchByCode[matchId],
           team_id: ids.teamByCode[teamCode],
           players: playerIds.map((pc) => ids.playerByCode[pc]).filter(Boolean),
@@ -920,7 +947,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
       }));
 
       if (idsRef.current) {
-        void liveWrite("insert_events", { events: newEvents.map(toDbEvent) });
+        queueWrite("insert_events", { events: newEvents.map(toDbEvent) });
         if (consumeCard) {
           writeUsage({ ...active, status: "applied" }, { minute, appliedAt: now });
         }
@@ -940,7 +967,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
         ...l,
         events: l.events.filter((e) => e.id !== eventId && e.linkedTo !== eventId),
       }));
-      if (idsRef.current) void liveWrite("delete_event", { id: eventId });
+      if (idsRef.current) queueWrite("delete_event", { id: eventId });
       revertCardForEvent(removed);
     },
     [revertCardForEvent],
@@ -963,7 +990,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
       }));
       if (idsRef.current) {
         const nowIso = new Date().toISOString();
-        void liveWrite("update_events", {
+        queueWrite("update_events", {
           rows: [
             { id: eventId, patch: { deleted_at: nowIso, deleted_reason: reason } },
             ...linkedIds.map((id) => ({
@@ -1013,7 +1040,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
       if (patch.homePens !== undefined) matchPatch.home_pens = patch.homePens;
       if (patch.awayPens !== undefined) matchPatch.away_pens = patch.awayPens;
       if (Object.keys(matchPatch).length > 0) {
-        void liveWrite("update_match", { id: ids.matchByCode[matchId], patch: matchPatch });
+        queueWrite("update_match", { id: ids.matchByCode[matchId], patch: matchPatch });
       }
       const report: Record<string, unknown> = { match_id: ids.matchByCode[matchId] };
       let hasReport = false;
@@ -1025,7 +1052,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
         report.referee_notes = patch.refereeNotes ?? null;
         hasReport = true;
       }
-      if (hasReport) void liveWrite("upsert_report", { report });
+      if (hasReport) queueWrite("upsert_report", { report });
     },
     [],
   );
@@ -1047,7 +1074,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
       const ids = idsRef.current;
       if (ids) {
         writeMatch(matchId, { status: "approved", home_score: score.home, away_score: score.away });
-        void liveWrite("upsert_report", {
+        queueWrite("upsert_report", {
           report: { match_id: ids.matchByCode[matchId], approved_at: new Date(now).toISOString() },
         });
       }
@@ -1125,7 +1152,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
       setLive((l) => ({ ...l, adjustments: [...l.adjustments, adj] }));
       const ids = idsRef.current;
       if (ids) {
-        void liveWrite("insert_adjustment", {
+        queueWrite("insert_adjustment", {
           adjustment: {
             league_id: ids.leagueId,
             team_id: ids.teamByCode[adj.teamCode],
@@ -1146,7 +1173,13 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const resetAll = useCallback(() => {
-    setLocal((s) => ({ ...initialLocal(), role: s.role }));
+    // القاعدة مشتركة — لا نمسحها من جهاز؛ نعيد ضبط ما يخص هذا الجهاز فقط
+    setLocal(initialLocal());
+    try {
+      localStorage.removeItem(LEGACY_KEY);
+    } catch {
+      // لا شيء
+    }
   }, []);
 
   const store: LeagueStore = {
@@ -1155,6 +1188,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     hydrated,
     matches,
     matchOf,
+    pendingWrites: pending,
     scheduleConflicts,
     conflictsOf,
     suggestReschedule,

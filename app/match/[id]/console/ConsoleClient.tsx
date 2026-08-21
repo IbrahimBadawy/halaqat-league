@@ -230,12 +230,26 @@ export default function ConsolePage() {
         <span className="flex-1 text-center text-[13.5px] font-medium" style={{ color: "var(--text-3)" }}>
           الليلة {match.round} · {match.venue} · تسجيل
         </span>
+        {/* حالة المزامنة الحقيقية — الأحداث تُسجَّل حتى بلا شبكة وتُرسل عند عودتها */}
         <span
           className="pill inline-flex items-center gap-1.5 px-2.5 py-1 text-[13px] font-semibold"
-          style={{ color: "var(--green-text)", background: "rgba(30,127,58,.14)" }}
+          style={
+            store.pendingWrites > 0
+              ? { color: "var(--warn)", background: "rgba(244,196,48,.14)" }
+              : { color: "var(--green-text)", background: "rgba(30,127,58,.14)" }
+          }
         >
-          <span className="h-1.5 w-1.5 rounded-full" style={{ background: "var(--green-text)" }} />
-          متصل
+          <span
+            className="h-1.5 w-1.5 rounded-full"
+            style={{ background: store.pendingWrites > 0 ? "var(--warn)" : "var(--green-text)" }}
+          />
+          {store.pendingWrites > 0 ? (
+            <>
+              بانتظار الشبكة <span className="num">{store.pendingWrites}</span>
+            </>
+          ) : (
+            "متصل"
+          )}
         </span>
       </div>
 

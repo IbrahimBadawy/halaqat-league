@@ -692,6 +692,41 @@ export type Database = {
           },
         ]
       }
+      posts: {
+        Row: {
+          author_name: string
+          created_at: string
+          id: string
+          league_id: string
+          likes: number
+          text: string
+        }
+        Insert: {
+          author_name: string
+          created_at?: string
+          id?: string
+          league_id: string
+          likes?: number
+          text: string
+        }
+        Update: {
+          author_name?: string
+          created_at?: string
+          id?: string
+          league_id?: string
+          likes?: number
+          text?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "posts_league_id_fkey"
+            columns: ["league_id"]
+            isOneToOne: false
+            referencedRelation: "leagues"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       power_card_templates: {
         Row: {
           description: string | null
@@ -1067,6 +1102,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      bump_post_likes: {
+        Args: { p_post: string }
+        Returns: undefined
+      }
       has_league_role: {
         Args: { p_league: string; p_roles: string[] }
         Returns: boolean

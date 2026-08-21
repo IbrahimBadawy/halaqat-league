@@ -4,6 +4,7 @@
 // بتحقق PIN — الـ RLS يبقى مقفولًا للكتابة المباشرة.
 
 import { supabase } from "../supabase/client";
+import { enqueueWrite } from "./queue";
 import { slotToMinutes, type LeagueSeed } from "./seed";
 import type { ClockState } from "./live-types";
 import type {
@@ -14,6 +15,8 @@ import type {
   MatchReport,
   MatchStatus,
   Player,
+  Post,
+  Prediction,
   StageKind,
   StandingAdjustment,
   Team,
@@ -41,6 +44,9 @@ export interface RemoteLive {
   starters: Record<string, Record<string, string[]>>;
   usages: CardUsageLite[];
   audit: AuditEntry[];
+  posts: Post[];
+  /** توقعات هذا الجهاز: matchCode -> نتيجة */
+  predictions: Record<string, Prediction>;
 }
 
 /** خرائط uuid ↔ أكواد الواجهة — تلزم للكتابة فقط */
@@ -70,7 +76,29 @@ export function emptyLive(): RemoteLive {
     starters: {},
     usages: [],
     audit: [],
+    posts: [],
+    predictions: {},
   };
+}
+
+const DEVICE_KEY_STORAGE = "halaqat-device-key";
+
+/** معرّف ثابت لهذا الجهاز — يربط التوقعات بصاحبها قبل وجود الحسابات */
+export function deviceKey(): string {
+  if (typeof window === "undefined") return "server";
+  try {
+    let k = window.localStorage.getItem(DEVICE_KEY_STORAGE);
+    if (!k) {
+      k =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `dev-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+      window.localStorage.setItem(DEVICE_KEY_STORAGE, k);
+    }
+    return k;
+  } catch {
+    return "anonymous";
+  }
 }
 
 const APP_STATUSES: MatchStatus[] = [
@@ -110,6 +138,8 @@ export async function fetchRemote(): Promise<RemoteSnapshot> {
     teamCardsQ,
     usagesQ,
     auditQ,
+    postsQ,
+    predictionsQ,
   ] = await Promise.all([
     supabase.from("leagues").select("*").limit(1).single(),
     supabase.from("venues").select("*"),
@@ -126,11 +156,14 @@ export async function fetchRemote(): Promise<RemoteSnapshot> {
     supabase.from("team_cards").select("*"),
     supabase.from("card_usages").select("*").order("created_at"),
     supabase.from("audit_log").select("*").order("created_at", { ascending: false }).limit(300),
+    supabase.from("posts").select("*").order("created_at", { ascending: false }).limit(200),
+    supabase.from("predictions").select("*").eq("device_key", deviceKey()),
   ]);
 
   for (const q of [
     leagueQ, venuesQ, availQ, teamsQ, playersQ, stagesQ, matchesQ, eventsQ,
     reportsQ, lineupsQ, adjQ, templatesQ, teamCardsQ, usagesQ, auditQ,
+    postsQ, predictionsQ,
   ]) {
     if (q.error) throw q.error;
   }
@@ -360,9 +393,26 @@ export async function fetchRemote(): Promise<RemoteSnapshot> {
     detail: a.detail ?? "",
   }));
 
+  const posts: Post[] = postsQ.data!.map((p) => ({
+    id: p.id,
+    author: p.author_name,
+    text: p.text,
+    at: Date.parse(p.created_at),
+    likes: p.likes,
+  }));
+
+  const predictions: Record<string, Prediction> = {};
+  for (const pr of predictionsQ.data!) {
+    const code = codeByMatch[pr.match_id];
+    if (code) predictions[code] = { home: pr.home, away: pr.away };
+  }
+
   return {
     seed,
-    live: { statuses, clocks, events, reports, adjustments, starters, usages, audit },
+    live: {
+      statuses, clocks, events, reports, adjustments, starters, usages, audit,
+      posts, predictions,
+    },
     ids: {
       leagueId: league.id,
       matchByCode,
@@ -386,6 +436,11 @@ export function livePin(): string {
   } catch {
     return "1234";
   }
+}
+
+/** إرسال عبر الطابور — لا يضيع شيء لو انقطعت الشبكة أثناء المباراة */
+export function queueWrite(action: string, payload: unknown): void {
+  enqueueWrite(action, payload);
 }
 
 export async function liveWrite(action: string, payload: unknown): Promise<boolean> {

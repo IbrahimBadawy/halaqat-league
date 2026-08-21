@@ -65,6 +65,13 @@ const USAGE_FIELDS = [
 const AUDIT_FIELDS = [
   "league_id", "actor_role", "action", "entity", "entity_id", "detail",
 ];
+const POST_FIELDS = ["id", "league_id", "author_name", "text", "created_at"];
+const PREDICTION_FIELDS = [
+  "league_id", "match_id", "device_key", "home", "away",
+];
+
+const MAX_POST_LEN = 500;
+const MAX_NAME_LEN = 60;
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -76,7 +83,12 @@ Deno.serve(async (req: Request) => {
   } catch {
     return json({ error: "bad_json" }, 400);
   }
-  if (body.pin !== PIN) return json({ error: "bad_pin" }, 403);
+  // أفعال الجمهور (نشر/إعجاب/توقع) لا تحتاج PIN — الباقي (كل ما يمس نتيجة
+  // مباراة أو ترتيبًا) يحتاجه. الحقول والأطوال مقيدة في كل الحالات.
+  const PUBLIC_ACTIONS = ["insert_post", "like_post", "upsert_prediction"];
+  if (!PUBLIC_ACTIONS.includes(String(body.action)) && body.pin !== PIN) {
+    return json({ error: "bad_pin" }, 403);
+  }
 
   // deno-lint-ignore no-explicit-any
   const p: any = body.payload ?? {};
@@ -173,6 +185,35 @@ Deno.serve(async (req: Request) => {
         const { error } = await admin
           .from("audit_log")
           .insert(pick(p.entry ?? {}, AUDIT_FIELDS));
+        if (error) throw error;
+        return json({ ok: true });
+      }
+      case "insert_post": {
+        const row = pick(p.post ?? {}, POST_FIELDS) as Record<string, string>;
+        const text = String(row.text ?? "").trim();
+        const author = String(row.author_name ?? "").trim();
+        if (!text || !author) return json({ error: "empty_post" }, 400);
+        const { error } = await admin.from("posts").insert({
+          ...row,
+          text: text.slice(0, MAX_POST_LEN),
+          author_name: author.slice(0, MAX_NAME_LEN),
+        });
+        if (error) throw error;
+        return json({ ok: true });
+      }
+      case "like_post": {
+        if (!UUID_RE.test(String(p.id))) return json({ error: "bad_id" }, 400);
+        const { error } = await admin.rpc("bump_post_likes", { p_post: p.id });
+        if (error) throw error;
+        return json({ ok: true });
+      }
+      case "upsert_prediction": {
+        const row = pick(p.prediction ?? {}, PREDICTION_FIELDS);
+        if (!UUID_RE.test(String(row.match_id)) || !row.device_key)
+          return json({ error: "bad_prediction" }, 400);
+        const { error } = await admin
+          .from("predictions")
+          .upsert(row, { onConflict: "match_id,device_key" });
         if (error) throw error;
         return json({ ok: true });
       }
