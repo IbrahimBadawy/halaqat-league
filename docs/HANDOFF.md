@@ -64,12 +64,29 @@
 - التقاطع البنيوي للرموز يستبعد (فائز × خاسر) نفس النصف — قاعدة نطاق موثقة
   في `lib/scheduling/conflicts.ts`.
 
-## الجاري: مرحلة Supabase + النشر
+## مكتمل: قاعدة Supabase (schema + seed + أنواع) والرفع إلى GitHub ✅
 
-- المستخدم جهّز MCP لـ Supabase — المشروع `halaqat_league`
-  (https://mgepypcbactyxiqokloi.supabase.co) وMCP لـ GitHub لرفع الكود والموقع.
-- الخطوة التالية: schema §7 من المواصفة + RLS، ثم مبادلة المخزن المحلي
-  (الـ seam في `lib/league/store.tsx`)، ورفع الريبو إلى GitHub.
+- **GitHub**: الريبو https://github.com/IbrahimBadawy/halaqat-league (private، فرع main).
+- **Supabase** (المشروع `mgepypcbactyxiqokloi`): 3 migrations مطبقة على السحابة
+  ومحفوظة في `supabase/migrations/`:
+  1. `initial_schema_phase0` — 21 جدولًا من §7 (حسابات/عضوية، ملاعب+إتاحة،
+     فرق+لاعبون، مراحل/مجموعات/مباريات، أحداث/تشكيلات/تقارير، تعديلات نقاط،
+     كروت قوة، توقعات، audit_log) + RLS على كل جدول + `has_league_role()`.
+  2. `seed_first_league` — الدوري الحقيقي كاملًا (تحقق بالعد: 10 فرق، 70 لاعبًا،
+     24 مباراة m1..m24، ملعبان + 3 فترات إتاحة، 4 كروت × 10 فرق).
+  3. `restrict_has_league_role_execute` — إغلاق تحذير advisor (سحب execute من anon).
+- الأنواع المولدة: `lib/supabase/types.ts`. القيم في `.env.local` (غير مرفوع).
+- مبادئ المخطط: النتيجة تُشتق من الأحداث (match_events.value + linked_to +
+  power_card)، الأطراف placeholders في home_side/away_side مع home_team_id
+  يُملأ عند الحسم، matches.code = m1..m24 وplayers.code = A1-4 لتطابق الواجهة.
+
+### الخطوة التالية (لم تبدأ): مبادلة المخزن المحلي بـ Supabase
+
+- الـ seam جاهز: الصفحات تكلم `lib/league/store.tsx` فقط.
+- المطلوب: `npm i @supabase/supabase-js` + عميل typed فوق `lib/supabase/types.ts`،
+  قراءة seed من الجداول بدل JSON، كتابة الأحداث/الحالات/التدقيق للجداول،
+  Realtime لصفحات المباشر، ثم Auth (username → بريد داخلي) وربط league_members.
+- النشر: ربط الريبو بـ Vercel (استيراد من GitHub) + ضبط env vars هناك.
 
 ## المؤجل للمراحل التالية (بالترتيب المقترح)
 
