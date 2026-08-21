@@ -516,6 +516,7 @@ export type Database = {
           away_score: number | null
           away_side: string
           away_team_id: string | null
+          clock: Json | null
           code: string
           created_at: string
           duration_override_minutes: number | null
@@ -542,6 +543,7 @@ export type Database = {
           away_score?: number | null
           away_side: string
           away_team_id?: string | null
+          clock?: Json | null
           code: string
           created_at?: string
           duration_override_minutes?: number | null
@@ -568,6 +570,7 @@ export type Database = {
           away_score?: number | null
           away_side?: string
           away_team_id?: string | null
+          clock?: Json | null
           code?: string
           created_at?: string
           duration_override_minutes?: number | null

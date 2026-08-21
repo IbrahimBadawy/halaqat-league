@@ -3,11 +3,14 @@ import "./globals.css";
 import { LeagueProvider } from "@/lib/league/store";
 import AppShell from "@/components/nav/AppShell";
 
+// مسارات الأصول تحترم basePath (النشر تحت /halaqat-league على GitHub Pages)
+const BP = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+
 export const metadata: Metadata = {
   title: "دوري الحلقات — صيف 2026",
   description: "التحدي يبدأ .. والبطولة لنا — منصة إدارة ومتابعة دوري الحلقات",
-  manifest: "/manifest.webmanifest",
-  icons: { icon: "/icon.svg" },
+  manifest: `${BP}/manifest.webmanifest`,
+  icons: { icon: `${BP}/icon.svg` },
 };
 
 export const viewport: Viewport = {

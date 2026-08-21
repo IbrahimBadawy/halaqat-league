@@ -1,9 +1,10 @@
 "use client";
 
-// مخزن حالة الدوري — طبقة البيانات المحلية (المرحلة 0).
-// كل الكتابات تمر من هنا وتُحفظ في localStorage، والقراءات مشتقة
-// (النتيجة من الأحداث، الترتيب من computeStandings) بحيث يُستبدل هذا
-// الملف بطبقة Supabase لاحقًا دون تغيير الصفحات.
+// مخزن حالة الدوري — الآن فوق Supabase (القراءة مباشرة بمفتاح publishable
+// عبر RLS للقراءة العامة، والكتابة حصريًا عبر Edge Function «live-write»
+// بتحقق PIN، والتحديث الحي عبر Realtime). الصفحات لم تتغير: نفس واجهة
+// useLeague() ونفس أشكال LeagueSeed/PersistedState بمفاتيح الأكواد m1../A1..
+// الدور والتوقعات ومنشورات المجتمع لا تزال محلية على الجهاز (المرحلة 0).
 
 import {
   createContext,
@@ -25,6 +26,16 @@ import {
   type ScheduleConflict,
 } from "../scheduling/conflicts";
 import { computeTeamSuspensions } from "../discipline/suspensions";
+import { supabase } from "../supabase/client";
+import {
+  emptyLive,
+  fetchRemote,
+  liveWrite,
+  type CardUsageLite,
+  type RemoteIds,
+  type RemoteLive,
+} from "./remote";
+import type { ActivePowerCard, ClockState } from "./live-types";
 import type {
   AuditEntry,
   DerivedScore,
@@ -41,27 +52,10 @@ import type {
   Suspension,
   Team,
 } from "./types";
-import { buildDemoState } from "./demo";
+
+export type { ActivePowerCard, ClockState } from "./live-types";
 
 export type Role = "visitor" | "recorder" | "admin";
-
-export interface ClockState {
-  period: "first" | "break" | "second" | "extra" | "ended";
-  running: boolean;
-  /** ثواني متراكمة للفترة الحالية (بدون الجارية الآن) */
-  periodSeconds: number;
-  /** ثواني متراكمة للمباراة كلها */
-  totalSeconds: number;
-  /** طابع بدء آخر تشغيل (ms) لو الساعة تعمل */
-  runningSince: number | null;
-  extraMinutes: number;
-}
-
-export interface ActivePowerCard {
-  teamCode: string;
-  cardName: string;
-  effect: "goal_multiplier" | "extra_time" | "shield" | "extra_substitution";
-}
 
 export interface PersistedState {
   role: Role;
@@ -70,12 +64,12 @@ export interface PersistedState {
   clocks: Record<string, ClockState>;
   reports: Record<string, MatchReport>;
   adjustments: StandingAdjustment[];
-  /** بدلاء دخلوا: matchId -> playerId -> "in" | "out" */
+  /** بدلاء دخلوا: matchId -> playerId -> "in" | "out" (مشتقة من أحداث التبديل) */
   lineupOverrides: Record<string, Record<string, "in" | "out">>;
   activeCards: Record<string, ActivePowerCard | undefined>;
   usedCards: { teamCode: string; cardName: string; matchId: string }[];
   audit: AuditEntry[];
-  /** تعديلات مواعيد/ملاعب فوق الـ seed: matchId -> {matchDay?, slot?, venue?} */
+  /** لم تعد مستخدمة — إعادة الجدولة تُكتب في جدول matches مباشرة */
   fixtureOverrides: Record<string, FixtureOverride>;
   /** توقعات صاحب الجهاز: matchId -> نتيجة متوقعة */
   predictions: Record<string, Prediction>;
@@ -84,26 +78,18 @@ export interface PersistedState {
   starters: Record<string, Record<string, string[]>>;
 }
 
-const STORAGE_KEY = "halaqat-league-v1";
+interface LocalState {
+  role: Role;
+  predictions: Record<string, Prediction>;
+  posts: Post[];
+}
+
+const LOCAL_KEY = "halaqat-league-local-v1";
+const LEGACY_KEY = "halaqat-league-v1";
 const ADMIN_PIN = "1234";
 
-function initialPersisted(): PersistedState {
-  return {
-    role: "visitor",
-    statuses: {},
-    events: [],
-    clocks: {},
-    reports: {},
-    adjustments: [],
-    lineupOverrides: {},
-    activeCards: {},
-    usedCards: [],
-    audit: [],
-    fixtureOverrides: {},
-    predictions: {},
-    posts: [],
-    starters: {},
-  };
+function initialLocal(): LocalState {
+  return { role: "visitor", predictions: {}, posts: [] };
 }
 
 function freshClock(): ClockState {
@@ -123,12 +109,17 @@ function newId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${idCounter}`;
 }
 
+function eventUuid(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+  return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
+}
+
 export interface LeagueStore {
   seed: LeagueSeed;
   state: PersistedState;
   hydrated: boolean;
 
-  /** المباريات الفعلية (الـ seed + تعديلات المواعيد) مرتبة (ليلة ← فترة ← ملعب) */
+  /** المباريات الفعلية (من القاعدة) مرتبة (ليلة ← فترة ← ملعب) */
   matches: Match[];
   matchOf: (matchId: string) => Match | undefined;
 
@@ -189,53 +180,176 @@ export interface LeagueStore {
 const Ctx = createContext<LeagueStore | null>(null);
 
 export function LeagueProvider({ children }: { children: ReactNode }) {
-  const seed = useMemo(() => loadSeed(), []);
-  const [state, setState] = useState<PersistedState>(initialPersisted);
+  // الـ seed المدمج fallback فوري حتى وصول بيانات القاعدة (أو عند انقطاع الشبكة)
+  const bundledSeed = useMemo(() => loadSeed(), []);
+  const [seed, setSeed] = useState<LeagueSeed>(bundledSeed);
+  const [live, setLive] = useState<RemoteLive>(emptyLive);
+  const [local, setLocal] = useState<LocalState>(initialLocal);
   const [hydrated, setHydrated] = useState(false);
-  const stateRef = useRef(state);
-  stateRef.current = state;
+  const [connected, setConnected] = useState(false);
 
+  const liveRef = useRef(live);
+  liveRef.current = live;
+  const seedRef = useRef(seed);
+  seedRef.current = seed;
+  const localRef = useRef(local);
+  localRef.current = local;
+  const idsRef = useRef<RemoteIds | null>(null);
+  const localLoaded = useRef(false);
+
+  const applySnapshot = useCallback(
+    (s: { seed: LeagueSeed; live: RemoteLive; ids: RemoteIds }) => {
+      idsRef.current = s.ids;
+      setSeed(s.seed);
+      setLive(s.live);
+    },
+    [],
+  );
+
+  // تحميل الحالة المحلية (الدور/التوقعات/المنشورات) ثم الجلب الأول من القاعدة
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) setState({ ...initialPersisted(), ...JSON.parse(raw) });
+      const raw = localStorage.getItem(LOCAL_KEY);
+      if (raw) {
+        setLocal((s) => ({ ...s, ...(JSON.parse(raw) as Partial<LocalState>) }));
+      } else {
+        // ترحيل من مخزن المرحلة المحلية القديم — الأجزاء الخاصة بالجهاز فقط
+        const legacy = localStorage.getItem(LEGACY_KEY);
+        if (legacy) {
+          const p = JSON.parse(legacy) as Partial<PersistedState>;
+          setLocal((s) => ({
+            ...s,
+            role: p.role ?? s.role,
+            predictions: p.predictions ?? {},
+            posts: p.posts ?? [],
+          }));
+        }
+      }
     } catch {
-      // بيانات تالفة — نبدأ من الصفر
+      // بيانات تالفة — نتجاهل
     }
-    setHydrated(true);
+    localLoaded.current = true;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const snapshot = await fetchRemote();
+        if (cancelled) return;
+        applySnapshot(snapshot);
+        setConnected(true);
+      } catch (e) {
+        console.error("تعذر الاتصال بقاعدة البيانات — عرض بيانات الـ seed المدمجة", e);
+      } finally {
+        if (!cancelled) setHydrated(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    if (!hydrated) return;
+    if (!localLoaded.current) return;
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      localStorage.setItem(LOCAL_KEY, JSON.stringify(local));
     } catch {
       // التخزين ممتلئ — نتجاهل
     }
-  }, [state, hydrated]);
+  }, [local]);
 
-  const update = useCallback(
-    (fn: (s: PersistedState) => PersistedState) => setState((s) => fn(s)),
-    [],
+  // التحديث الحي: أي تغيير في الجداول الحية يعيد الجلب (مع دمج التغييرات المتقاربة)
+  useEffect(() => {
+    if (!connected) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const refetch = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(async () => {
+        try {
+          applySnapshot(await fetchRemote());
+        } catch {
+          // سيُعاد المزامنة مع التغيير التالي
+        }
+      }, 350);
+    };
+    const channel = supabase.channel("league-live");
+    for (const table of [
+      "matches",
+      "match_events",
+      "match_lineups",
+      "match_reports",
+      "standing_adjustments",
+      "card_usages",
+      "audit_log",
+    ]) {
+      channel.on("postgres_changes", { event: "*", schema: "public", table }, refetch);
+    }
+    channel.subscribe();
+    return () => {
+      if (timer) clearTimeout(timer);
+      void supabase.removeChannel(channel);
+    };
+  }, [connected, applySnapshot]);
+
+  // ————— الحالة المركبة بنفس شكل PersistedState القديم —————
+
+  // من في الملعب: مشتق من أحداث التبديل غير المحذوفة بترتيب تسجيلها —
+  // فالتراجع عن تبديل يصحح التشكيلة تلقائيًا
+  const lineupOverrides = useMemo(() => {
+    const out: Record<string, Record<string, "in" | "out">> = {};
+    for (const e of live.events) {
+      if (e.type !== "sub" || e.deleted || !e.playerId || !e.secondaryPlayerId) continue;
+      const ov = (out[e.matchId] ??= {});
+      ov[e.playerId] = "out";
+      ov[e.secondaryPlayerId] = "in";
+    }
+    return out;
+  }, [live.events]);
+
+  const activeCards = useMemo(() => {
+    const out: Record<string, ActivePowerCard | undefined> = {};
+    for (const u of live.usages) {
+      if (u.status !== "approved") continue;
+      out[u.matchId] = {
+        teamCode: u.teamCode,
+        cardName: u.cardName,
+        effect: u.effect as ActivePowerCard["effect"],
+      };
+    }
+    return out;
+  }, [live.usages]);
+
+  const usedCards = useMemo(
+    () =>
+      live.usages
+        .filter((u) => u.status === "approved" || u.status === "applied")
+        .map((u) => ({ teamCode: u.teamCode, cardName: u.cardName, matchId: u.matchId })),
+    [live.usages],
   );
 
-  const audit = useCallback(
-    (s: PersistedState, action: string, entity: string, detail: string): PersistedState => ({
-      ...s,
-      audit: [
-        {
-          id: newId("a"),
-          at: Date.now(),
-          actor: s.role,
-          action,
-          entity,
-          detail,
-        },
-        ...s.audit,
-      ].slice(0, 300),
+  const state: PersistedState = useMemo(
+    () => ({
+      role: local.role,
+      statuses: live.statuses,
+      events: live.events,
+      clocks: live.clocks,
+      reports: live.reports,
+      adjustments: live.adjustments,
+      lineupOverrides,
+      activeCards,
+      usedCards,
+      audit: live.audit,
+      fixtureOverrides: {},
+      predictions: local.predictions,
+      posts: local.posts,
+      starters: live.starters,
     }),
-    [],
+    [local, live, lineupOverrides, activeCards, usedCards],
   );
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
+  // ————— القراءات المشتقة (لم تتغير عن النسخة المحلية) —————
 
   const statusOf = useCallback(
     (matchId: string): MatchStatus => state.statuses[matchId] ?? "scheduled",
@@ -250,29 +364,16 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     [state.events],
   );
 
-  // المباريات الفعلية: الـ seed + تعديلات المواعيد، مرتبة (ليلة ← فترة ← ملعب).
-  // الفترات بعد منتصف الليل تتبع ليلتها فترتيبها هو ترتيب مصفوفة slots في الـ seed.
-  const matches = useMemo(() => {
-    return seed.matches
-      .map((m) => {
-        const ov = state.fixtureOverrides[m.id];
-        if (!ov) return m;
-        const matchDay = ov.matchDay ?? m.matchDay;
-        return {
-          ...m,
-          matchDay,
-          slot: ov.slot ?? m.slot,
-          venue: ov.venue ?? m.venue,
-          round: seed.matchDays.indexOf(matchDay) + 1,
-        };
-      })
-      .sort(
+  const matches = useMemo(
+    () =>
+      [...seed.matches].sort(
         (a, b) =>
           a.matchDay.localeCompare(b.matchDay) ||
           slotToMinutes(a.slot) - slotToMinutes(b.slot) ||
           a.venue.localeCompare(b.venue),
-      );
-  }, [seed, state.fixtureOverrides]);
+      ),
+    [seed],
+  );
 
   const matchById = useMemo(() => {
     const m = new Map<string, Match>();
@@ -421,9 +522,6 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     [playersOf, onFieldPlayers],
   );
 
-  // تعارضات الجدول — تُحسب على المباريات الفعلية كلها.
-  // موسّع الرموز البنيوي يكشف تبعية النهائي/الثالث على نصفَي النهائي
-  // حتى قبل تحدد الفرق.
   const scheduleConflicts = useMemo(
     () =>
       checkScheduleConflicts(matches, seed.venues, seed.slots, structuralSideTokens(matches)),
@@ -451,7 +549,6 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     [matchById, matches, seed],
   );
 
-  // الإيقافات التلقائية — لكل فريق: مبارياته المحلولة بترتيب الجدول
   const suspensions = useMemo<Suspension[]>(() => {
     const out: Suspension[] = [];
     for (const team of seed.teams) {
@@ -485,92 +582,106 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     [suspensions],
   );
 
-  // ————— الأفعال —————
+  // ————— مساعدات الكتابة البعيدة —————
 
-  const setRole = useCallback(
-    (role: Role) => update((s) => ({ ...s, role })),
-    [update],
-  );
-
-  const rescheduleMatch = useCallback(
-    (matchId: string, patch: FixtureOverride, reason: string) =>
-      update((s) => {
-        const prev = s.fixtureOverrides[matchId] ?? {};
-        const next = { ...prev, ...patch };
-        const detail = [
-          patch.matchDay ? `الليلة ← ${patch.matchDay}` : null,
-          patch.slot ? `الفترة ← ${patch.slot}` : null,
-          patch.venue ? `الملعب ← ${patch.venue}` : null,
-        ]
-          .filter(Boolean)
-          .join(" · ");
-        return audit(
-          { ...s, fixtureOverrides: { ...s.fixtureOverrides, [matchId]: next } },
-          "تغيير موعد مباراة",
-          matchId,
-          `${detail} — السبب: ${reason}`,
-        );
-      }),
-    [update, audit],
-  );
-
-  const setPrediction = useCallback(
-    (matchId: string, p: Prediction) =>
-      update((s) => ({ ...s, predictions: { ...s.predictions, [matchId]: p } })),
-    [update],
-  );
-
-  const addPost = useCallback(
-    (author: string, text: string) =>
-      update((s) => ({
-        ...s,
-        posts: [
-          { id: newId("p"), author, text, at: Date.now(), likes: 0 },
-          ...s.posts,
-        ].slice(0, 200),
-      })),
-    [update],
-  );
-
-  const likePost = useCallback(
-    (postId: string) =>
-      update((s) => ({
-        ...s,
-        posts: s.posts.map((p) => (p.id === postId ? { ...p, likes: p.likes + 1 } : p)),
-      })),
-    [update],
-  );
-
-  const setStarters = useCallback(
-    (matchId: string, teamCode: string, playerIds: string[]) =>
-      update((s) => ({
-        ...s,
-        starters: {
-          ...s.starters,
-          [matchId]: { ...s.starters[matchId], [teamCode]: playerIds },
+  /** يسجل قيد تدقيق محليًا فورًا ويرسله للقاعدة */
+  const pushAudit = useCallback((action: string, entity: string, detail: string) => {
+    const entry: AuditEntry = {
+      id: newId("a"),
+      at: Date.now(),
+      actor: localRef.current.role,
+      action,
+      entity,
+      detail,
+    };
+    setLive((l) => ({ ...l, audit: [entry, ...l.audit].slice(0, 300) }));
+    const ids = idsRef.current;
+    if (ids) {
+      void liveWrite("insert_audit", {
+        entry: {
+          league_id: ids.leagueId,
+          actor_role: entry.actor,
+          action,
+          entity,
+          entity_id: entity,
+          detail,
         },
-      })),
-    [update],
+      });
+    }
+  }, []);
+
+  const writeMatch = useCallback(
+    (matchId: string, patch: Record<string, unknown>) => {
+      const ids = idsRef.current;
+      if (!ids) return;
+      void liveWrite("update_match", { id: ids.matchByCode[matchId], patch });
+    },
+    [],
   );
 
-  const startMatch = useCallback(
-    (matchId: string) =>
-      update((s) =>
-        audit(
-          {
-            ...s,
-            statuses: { ...s.statuses, [matchId]: "live" },
-            clocks: {
-              ...s.clocks,
-              [matchId]: { ...freshClock(), running: true, runningSince: Date.now() },
-            },
-          },
-          "بدء مباراة",
-          matchId,
-          "بدأ الشوط الأول",
-        ),
-      ),
-    [update, audit],
+  const toDbEvent = useCallback((e: MatchEvent) => {
+    const ids = idsRef.current!;
+    return {
+      id: e.id,
+      match_id: ids.matchByCode[e.matchId],
+      team_id: ids.teamByCode[e.teamCode],
+      player_id: e.playerId ? ids.playerByCode[e.playerId] : null,
+      secondary_player_id: e.secondaryPlayerId ? ids.playerByCode[e.secondaryPlayerId] : null,
+      type: e.type,
+      subtype: e.subtype ?? null,
+      minute: e.minute,
+      period: e.period,
+      value: e.value,
+      note: e.note ?? null,
+      linked_to: e.linkedTo ?? null,
+      power_card: e.powerCard ?? null,
+      created_at: new Date(e.createdAt).toISOString(),
+    };
+  }, []);
+
+  const writeUsage = useCallback(
+    (u: CardUsageLite, patch?: { minute?: number; appliedAt?: number }) => {
+      const ids = idsRef.current;
+      if (!ids || !u.teamCardId) return;
+      void liveWrite("upsert_card_usage", {
+        usage: {
+          id: u.id,
+          team_card_id: u.teamCardId,
+          match_id: ids.matchByCode[u.matchId],
+          status: u.status,
+          minute: patch?.minute ?? null,
+          effect_snapshot: { team_code: u.teamCode, card_name: u.cardName, effect: u.effect },
+          applied_at: patch?.appliedAt ? new Date(patch.appliedAt).toISOString() : null,
+        },
+      });
+    },
+    [],
+  );
+
+  /** إلغاء هدف مضاعف: يعيد الكارت مفعّلًا لو خانة المباراة فارغة، وإلا يرده للرصيد */
+  const revertCardForEvent = useCallback(
+    (removed: MatchEvent) => {
+      if (!removed.powerCard) return;
+      const usages = liveRef.current.usages;
+      const applied = usages.find(
+        (u) =>
+          u.matchId === removed.matchId &&
+          u.teamCode === removed.teamCode &&
+          u.cardName === removed.powerCard &&
+          u.status === "applied",
+      );
+      if (!applied) return;
+      const slotTaken = usages.some(
+        (u) => u.matchId === removed.matchId && u.status === "approved",
+      );
+      const status: CardUsageLite["status"] = slotTaken ? "cancelled" : "approved";
+      setLive((l) => ({
+        ...l,
+        usages: l.usages.map((u) => (u.id === applied.id ? { ...u, status } : u)),
+      }));
+      writeUsage({ ...applied, status });
+    },
+    [writeUsage],
   );
 
   const flushClock = (c: ClockState): ClockState => {
@@ -584,58 +695,159 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     };
   };
 
+  // ————— الأفعال —————
+
+  const setRole = useCallback(
+    (role: Role) => setLocal((s) => ({ ...s, role })),
+    [],
+  );
+
+  const rescheduleMatch = useCallback(
+    (matchId: string, patch: FixtureOverride, reason: string) => {
+      const days = seedRef.current.matchDays;
+      setSeed((s) => ({
+        ...s,
+        matches: s.matches.map((m) =>
+          m.id === matchId
+            ? {
+                ...m,
+                matchDay: patch.matchDay ?? m.matchDay,
+                slot: patch.slot ?? m.slot,
+                venue: patch.venue ?? m.venue,
+                round: patch.matchDay ? days.indexOf(patch.matchDay) + 1 : m.round,
+              }
+            : m,
+        ),
+      }));
+      const ids = idsRef.current;
+      if (ids) {
+        const dbPatch: Record<string, unknown> = {};
+        if (patch.matchDay) dbPatch.match_day = patch.matchDay;
+        if (patch.slot) dbPatch.slot = patch.slot;
+        if (patch.venue) dbPatch.venue_id = ids.venueByName[patch.venue];
+        void liveWrite("update_match", { id: ids.matchByCode[matchId], patch: dbPatch });
+      }
+      const detail = [
+        patch.matchDay ? `الليلة ← ${patch.matchDay}` : null,
+        patch.slot ? `الفترة ← ${patch.slot}` : null,
+        patch.venue ? `الملعب ← ${patch.venue}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      pushAudit("تغيير موعد مباراة", matchId, `${detail} — السبب: ${reason}`);
+    },
+    [pushAudit],
+  );
+
+  const setPrediction = useCallback(
+    (matchId: string, p: Prediction) =>
+      setLocal((s) => ({ ...s, predictions: { ...s.predictions, [matchId]: p } })),
+    [],
+  );
+
+  const addPost = useCallback(
+    (author: string, text: string) =>
+      setLocal((s) => ({
+        ...s,
+        posts: [{ id: newId("p"), author, text, at: Date.now(), likes: 0 }, ...s.posts].slice(0, 200),
+      })),
+    [],
+  );
+
+  const likePost = useCallback(
+    (postId: string) =>
+      setLocal((s) => ({
+        ...s,
+        posts: s.posts.map((p) => (p.id === postId ? { ...p, likes: p.likes + 1 } : p)),
+      })),
+    [],
+  );
+
+  const setStarters = useCallback(
+    (matchId: string, teamCode: string, playerIds: string[]) => {
+      setLive((l) => ({
+        ...l,
+        starters: {
+          ...l.starters,
+          [matchId]: { ...l.starters[matchId], [teamCode]: playerIds },
+        },
+      }));
+      const ids = idsRef.current;
+      if (ids) {
+        void liveWrite("set_starters", {
+          match_id: ids.matchByCode[matchId],
+          team_id: ids.teamByCode[teamCode],
+          players: playerIds.map((pc) => ids.playerByCode[pc]).filter(Boolean),
+        });
+      }
+    },
+    [],
+  );
+
+  const startMatch = useCallback(
+    (matchId: string) => {
+      const clock: ClockState = { ...freshClock(), running: true, runningSince: Date.now() };
+      setLive((l) => ({
+        ...l,
+        statuses: { ...l.statuses, [matchId]: "live" },
+        clocks: { ...l.clocks, [matchId]: clock },
+      }));
+      writeMatch(matchId, { status: "live", clock });
+      pushAudit("بدء مباراة", matchId, "بدأ الشوط الأول");
+    },
+    [writeMatch, pushAudit],
+  );
+
   const toggleClock = useCallback(
-    (matchId: string) =>
-      update((s) => {
-        const c0 = s.clocks[matchId] ?? freshClock();
-        if (c0.period === "ended") return s; // المباراة انتهت — لا تشغيل بعدها
-        const c = flushClock(c0);
-        const next: ClockState = c.running
-          ? { ...c, running: false, runningSince: null }
-          : { ...c, running: true, runningSince: Date.now() };
-        return { ...s, clocks: { ...s.clocks, [matchId]: next } };
-      }),
-    [update],
+    (matchId: string) => {
+      const c0 = liveRef.current.clocks[matchId] ?? freshClock();
+      if (c0.period === "ended") return; // المباراة انتهت — لا تشغيل بعدها
+      const c = flushClock(c0);
+      const next: ClockState = c.running
+        ? { ...c, running: false, runningSince: null }
+        : { ...c, running: true, runningSince: Date.now() };
+      setLive((l) => ({ ...l, clocks: { ...l.clocks, [matchId]: next } }));
+      writeMatch(matchId, { clock: next });
+    },
+    [writeMatch],
   );
 
   const advancePeriod = useCallback(
-    (matchId: string) =>
-      update((s) => {
-        const c0 = s.clocks[matchId] ?? freshClock();
-        if (c0.period === "ended") return s; // المباراة انتهت — لا فترات بعدها
-        const c = flushClock(c0);
-        let period: ClockState["period"] = c.period;
-        let status: MatchStatus = s.statuses[matchId] ?? "live";
-        if (c.period === "first") {
-          period = "break";
-          status = "half_time";
-        } else if (c.period === "break") {
-          period = "second";
-          status = "live";
-        } else if (c.period === "second") {
-          period = "extra";
-        }
-        return audit(
-          {
-            ...s,
-            statuses: { ...s.statuses, [matchId]: status },
-            clocks: {
-              ...s.clocks,
-              [matchId]: {
-                ...c,
-                period,
-                periodSeconds: 0,
-                running: period !== "break",
-                runningSince: period !== "break" ? Date.now() : null,
-              },
-            },
-          },
-          "تغيير فترة",
-          matchId,
-          period === "break" ? "استراحة" : period === "second" ? "الشوط الثاني" : "وقت إضافي",
-        );
-      }),
-    [update, audit],
+    (matchId: string) => {
+      const c0 = liveRef.current.clocks[matchId] ?? freshClock();
+      if (c0.period === "ended") return; // المباراة انتهت — لا فترات بعدها
+      const c = flushClock(c0);
+      let period: ClockState["period"] = c.period;
+      let status: MatchStatus = liveRef.current.statuses[matchId] ?? "live";
+      if (c.period === "first") {
+        period = "break";
+        status = "half_time";
+      } else if (c.period === "break") {
+        period = "second";
+        status = "live";
+      } else if (c.period === "second") {
+        period = "extra";
+      }
+      const next: ClockState = {
+        ...c,
+        period,
+        periodSeconds: 0,
+        running: period !== "break",
+        runningSince: period !== "break" ? Date.now() : null,
+      };
+      setLive((l) => ({
+        ...l,
+        statuses: { ...l.statuses, [matchId]: status },
+        clocks: { ...l.clocks, [matchId]: next },
+      }));
+      writeMatch(matchId, { status, clock: next });
+      pushAudit(
+        "تغيير فترة",
+        matchId,
+        period === "break" ? "استراحة" : period === "second" ? "الشوط الثاني" : "وقت إضافي",
+      );
+    },
+    [writeMatch, pushAudit],
   );
 
   const recordEvent = useCallback(
@@ -645,342 +857,296 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
         value?: number;
       },
     ): MatchEvent => {
-      const s0 = stateRef.current;
-      const c = s0.clocks[matchId] ?? freshClock();
+      const l0 = liveRef.current;
+      const c = l0.clocks[matchId] ?? freshClock();
       const extra = c.running && c.runningSince ? (Date.now() - c.runningSince) / 1000 : 0;
       const minute = Math.min(99, Math.floor((c.totalSeconds + extra) / 60) + 1);
       const period = c.period === "second" || c.period === "extra" ? c.period : "first";
 
       // كارت "الهدف بهدفين" النشط لهذا الفريق يجعل قيمة الهدف 2 ويُستهلك
-      let value = e.value ?? 1;
-      const active = s0.activeCards[matchId];
+      const active = l0.usages.find((u) => u.matchId === matchId && u.status === "approved");
       const consumeCard =
         e.type === "goal" &&
-        active &&
+        active !== undefined &&
         active.teamCode === e.teamCode &&
         active.effect === "goal_multiplier";
-      if (consumeCard) value = 2;
+      const value = consumeCard ? 2 : (e.value ?? 1);
+      const now = Date.now();
 
       const event: MatchEvent = {
         ...e,
-        id: newId("e"),
+        id: eventUuid(),
         matchId,
         minute,
         period: period === "extra" ? "extra" : period,
         value,
-        ...(consumeCard ? { powerCard: active!.cardName } : {}),
-        createdAt: Date.now(),
+        ...(consumeCard ? { powerCard: active.cardName } : {}),
+        createdAt: now,
       };
+      const newEvents: MatchEvent[] = [event];
 
-      update((s) => {
-        let next: PersistedState = { ...s, events: [...s.events, event] };
-
-        // الإنذار الثاني لنفس اللاعب = طرد تلقائي
-        if (e.type === "yellow" && e.playerId) {
-          const priorYellows = s.events.filter(
-            (x) =>
-              x.matchId === matchId &&
-              x.playerId === e.playerId &&
-              x.type === "yellow" &&
-              !x.deleted,
-          ).length;
-          if (priorYellows >= 1) {
-            next = {
-              ...next,
-              events: [
-                ...next.events,
-                {
-                  id: newId("e"),
-                  matchId,
-                  teamCode: e.teamCode,
-                  playerId: e.playerId,
-                  type: "red",
-                  subtype: "second_yellow",
-                  minute,
-                  period: event.period,
-                  value: 1,
-                  linkedTo: event.id,
-                  createdAt: Date.now() + 1,
-                },
-              ],
-            };
-          }
+      // الإنذار الثاني لنفس اللاعب = طرد تلقائي مرافق (يُلغى مع أصله)
+      if (e.type === "yellow" && e.playerId) {
+        const priorYellows = l0.events.filter(
+          (x) =>
+            x.matchId === matchId &&
+            x.playerId === e.playerId &&
+            x.type === "yellow" &&
+            !x.deleted,
+        ).length;
+        if (priorYellows >= 1) {
+          newEvents.push({
+            id: eventUuid(),
+            matchId,
+            teamCode: e.teamCode,
+            playerId: e.playerId,
+            type: "red",
+            subtype: "second_yellow",
+            minute,
+            period: event.period,
+            value: 1,
+            linkedTo: event.id,
+            createdAt: now + 1,
+          });
         }
+      }
 
-        // التبديل: تحديث من في الملعب
-        if (e.type === "sub" && e.playerId && e.secondaryPlayerId) {
-          const ov = { ...(next.lineupOverrides[matchId] ?? {}) };
-          ov[e.playerId] = "out";
-          ov[e.secondaryPlayerId] = "in";
-          next = {
-            ...next,
-            lineupOverrides: { ...next.lineupOverrides, [matchId]: ov },
-          };
-        }
+      setLive((l) => ({
+        ...l,
+        events: [...l.events, ...newEvents],
+        usages: consumeCard
+          ? l.usages.map((u) => (u.id === active.id ? { ...u, status: "applied" as const } : u))
+          : l.usages,
+      }));
 
+      if (idsRef.current) {
+        void liveWrite("insert_events", { events: newEvents.map(toDbEvent) });
         if (consumeCard) {
-          next = {
-            ...next,
-            activeCards: { ...next.activeCards, [matchId]: undefined },
-          };
+          writeUsage({ ...active, status: "applied" }, { minute, appliedAt: now });
         }
-        return next;
-      });
+      }
       return event;
     },
-    [update],
+    [toDbEvent, writeUsage],
   );
 
-  /** إعادة بناء من في الملعب لمباراة من أحداث التبديل غير المحذوفة بترتيب تسجيلها */
-  const replayLineup = (events: MatchEvent[], matchId: string): Record<string, "in" | "out"> => {
-    const ov: Record<string, "in" | "out"> = {};
-    const subs = events
-      .filter(
-        (x) =>
-          x.matchId === matchId &&
-          x.type === "sub" &&
-          !x.deleted &&
-          x.playerId &&
-          x.secondaryPlayerId,
-      )
-      .sort((a, b) => a.createdAt - b.createdAt);
-    for (const e of subs) {
-      ov[e.playerId!] = "out";
-      ov[e.secondaryPlayerId!] = "in";
-    }
-    return ov;
-  };
-
-  /** إرجاع آثار حدث ملغى: تبديلات الملعب وكارت الهدف المضاعف */
-  const revertEventSideEffects = (
-    s: PersistedState,
-    removed: MatchEvent,
-    events: MatchEvent[],
-  ): PersistedState => {
-    let next = s;
-    if (removed.type === "sub") {
-      next = {
-        ...next,
-        lineupOverrides: {
-          ...next.lineupOverrides,
-          [removed.matchId]: replayLineup(events, removed.matchId),
-        },
-      };
-    }
-    if (removed.powerCard) {
-      const card = seed.powerCards.find((c) => c.name === removed.powerCard);
-      if (card && !next.activeCards[removed.matchId]) {
-        // الهدف المضاعف أُلغي فالكارت لم يُستهلك فعليًا — يعود مفعّلًا لفريقه
-        next = {
-          ...next,
-          activeCards: {
-            ...next.activeCards,
-            [removed.matchId]: {
-              teamCode: removed.teamCode,
-              cardName: removed.powerCard,
-              effect: card.effect_type as ActivePowerCard["effect"],
-            },
-          },
-        };
-      } else {
-        // خانة الكارت النشط مشغولة — نرد الكارت لرصيد الفريق ليُفعَّل لاحقًا
-        next = {
-          ...next,
-          usedCards: next.usedCards.filter(
-            (u) =>
-              !(
-                u.teamCode === removed.teamCode &&
-                u.cardName === removed.powerCard &&
-                u.matchId === removed.matchId
-              ),
-          ),
-        };
-      }
-    }
-    return next;
-  };
-
   const removeEvent = useCallback(
-    (eventId: string) =>
-      update((s) => {
-        const removed = s.events.find((e) => e.id === eventId);
-        if (!removed) return s;
-        // الأحداث المرافقة المولدة تلقائيًا (طرد الإنذار الثاني) تُحذف مع أصلها
-        const events = s.events.filter((e) => e.id !== eventId && e.linkedTo !== eventId);
-        return revertEventSideEffects({ ...s, events }, removed, events);
-      }),
-    // revertEventSideEffects تعتمد على seed الثابت فقط
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [update, seed],
+    (eventId: string) => {
+      const removed = liveRef.current.events.find((e) => e.id === eventId);
+      if (!removed) return;
+      // الأحداث المرافقة (طرد الإنذار الثاني) تُحذف مع أصلها — والقاعدة تكرر
+      // ذلك تلقائيًا (linked_to on delete cascade)
+      setLive((l) => ({
+        ...l,
+        events: l.events.filter((e) => e.id !== eventId && e.linkedTo !== eventId),
+      }));
+      if (idsRef.current) void liveWrite("delete_event", { id: eventId });
+      revertCardForEvent(removed);
+    },
+    [revertCardForEvent],
   );
 
   const deleteEventWithReason = useCallback(
-    (eventId: string, reason: string) =>
-      update((s) => {
-        const removed = s.events.find((e) => e.id === eventId);
-        if (!removed) return s;
-        const events = s.events.map((e) =>
+    (eventId: string, reason: string) => {
+      const l0 = liveRef.current;
+      const removed = l0.events.find((e) => e.id === eventId);
+      if (!removed) return;
+      const linkedIds = l0.events.filter((e) => e.linkedTo === eventId).map((e) => e.id);
+      const linkedReason = "تبعًا لحذف الحدث الأصلي";
+      setLive((l) => ({
+        ...l,
+        events: l.events.map((e) =>
           e.id === eventId || e.linkedTo === eventId
-            ? {
-                ...e,
-                deleted: true,
-                deletedReason: e.id === eventId ? reason : "تبعًا لحذف الحدث الأصلي",
-              }
+            ? { ...e, deleted: true, deletedReason: e.id === eventId ? reason : linkedReason }
             : e,
-        );
-        return audit(
-          revertEventSideEffects({ ...s, events }, removed, events),
-          "حذف حدث",
-          eventId,
-          reason,
-        );
-      }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [update, audit, seed],
+        ),
+      }));
+      if (idsRef.current) {
+        const nowIso = new Date().toISOString();
+        void liveWrite("update_events", {
+          rows: [
+            { id: eventId, patch: { deleted_at: nowIso, deleted_reason: reason } },
+            ...linkedIds.map((id) => ({
+              id,
+              patch: { deleted_at: nowIso, deleted_reason: linkedReason },
+            })),
+          ],
+        });
+      }
+      revertCardForEvent(removed);
+      pushAudit("حذف حدث", eventId, reason);
+    },
+    [revertCardForEvent, pushAudit],
   );
 
   const endMatch = useCallback(
-    (matchId: string) =>
-      update((s) => {
-        const c = flushClock(s.clocks[matchId] ?? freshClock());
-        return audit(
-          {
-            ...s,
-            statuses: { ...s.statuses, [matchId]: "finished" },
-            clocks: {
-              ...s.clocks,
-              [matchId]: { ...c, period: "ended", running: false, runningSince: null },
-            },
-          },
-          "نهاية مباراة",
-          matchId,
-          "أنهى المسجّل المباراة — بانتظار الاعتماد",
-        );
-      }),
-    [update, audit],
+    (matchId: string) => {
+      const c = flushClock(liveRef.current.clocks[matchId] ?? freshClock());
+      const clock: ClockState = { ...c, period: "ended", running: false, runningSince: null };
+      setLive((l) => ({
+        ...l,
+        statuses: { ...l.statuses, [matchId]: "finished" },
+        clocks: { ...l.clocks, [matchId]: clock },
+      }));
+      const match = seedRef.current.matches.find((m) => m.id === matchId);
+      const score = match ? deriveScore(match, liveRef.current.events) : { home: 0, away: 0 };
+      writeMatch(matchId, {
+        status: "finished",
+        clock,
+        home_score: score.home,
+        away_score: score.away,
+      });
+      pushAudit("نهاية مباراة", matchId, "أنهى المسجّل المباراة — بانتظار الاعتماد");
+    },
+    [writeMatch, pushAudit],
   );
 
   const setReport = useCallback(
-    (matchId: string, patch: Partial<MatchReport>) =>
-      update((s) => ({
-        ...s,
-        reports: { ...s.reports, [matchId]: { ...s.reports[matchId], ...patch } },
-      })),
-    [update],
+    (matchId: string, patch: Partial<MatchReport>) => {
+      setLive((l) => ({
+        ...l,
+        reports: { ...l.reports, [matchId]: { ...l.reports[matchId], ...patch } },
+      }));
+      const ids = idsRef.current;
+      if (!ids) return;
+      const matchPatch: Record<string, unknown> = {};
+      if (patch.homePens !== undefined) matchPatch.home_pens = patch.homePens;
+      if (patch.awayPens !== undefined) matchPatch.away_pens = patch.awayPens;
+      if (Object.keys(matchPatch).length > 0) {
+        void liveWrite("update_match", { id: ids.matchByCode[matchId], patch: matchPatch });
+      }
+      const report: Record<string, unknown> = { match_id: ids.matchByCode[matchId] };
+      let hasReport = false;
+      if (patch.motmPlayerId !== undefined) {
+        report.motm_player_id = patch.motmPlayerId ? ids.playerByCode[patch.motmPlayerId] : null;
+        hasReport = true;
+      }
+      if (patch.refereeNotes !== undefined) {
+        report.referee_notes = patch.refereeNotes ?? null;
+        hasReport = true;
+      }
+      if (hasReport) void liveWrite("upsert_report", { report });
+    },
+    [],
   );
 
   const approveMatch = useCallback(
     (matchId: string, pin: string): boolean => {
       if (pin !== ADMIN_PIN) return false;
-      update((s) =>
-        audit(
-          {
-            ...s,
-            statuses: { ...s.statuses, [matchId]: "approved" },
-            reports: {
-              ...s.reports,
-              [matchId]: { ...s.reports[matchId], approvedAt: Date.now() },
-            },
-          },
-          "اعتماد نتيجة",
-          matchId,
-          "اعتمد الحكم النتيجة بالرقم السري — النتيجة مقفولة والترتيب تحدّث",
-        ),
+      const now = Date.now();
+      setLive((l) => ({
+        ...l,
+        statuses: { ...l.statuses, [matchId]: "approved" },
+        reports: {
+          ...l.reports,
+          [matchId]: { ...l.reports[matchId], approvedAt: now },
+        },
+      }));
+      const match = seedRef.current.matches.find((m) => m.id === matchId);
+      const score = match ? deriveScore(match, liveRef.current.events) : { home: 0, away: 0 };
+      const ids = idsRef.current;
+      if (ids) {
+        writeMatch(matchId, { status: "approved", home_score: score.home, away_score: score.away });
+        void liveWrite("upsert_report", {
+          report: { match_id: ids.matchByCode[matchId], approved_at: new Date(now).toISOString() },
+        });
+      }
+      pushAudit(
+        "اعتماد نتيجة",
+        matchId,
+        "اعتمد الحكم النتيجة بالرقم السري — النتيجة مقفولة والترتيب تحدّث",
       );
       return true;
     },
-    [update, audit],
+    [writeMatch, pushAudit],
   );
 
   const reopenMatch = useCallback(
-    (matchId: string) =>
-      update((s) =>
-        audit(
-          { ...s, statuses: { ...s.statuses, [matchId]: "finished" } },
-          "إعادة فتح مباراة",
-          matchId,
-          "أعاد الأدمن فتح مباراة معتمدة",
-        ),
-      ),
-    [update, audit],
+    (matchId: string) => {
+      setLive((l) => ({ ...l, statuses: { ...l.statuses, [matchId]: "finished" } }));
+      writeMatch(matchId, { status: "finished" });
+      pushAudit("إعادة فتح مباراة", matchId, "أعاد الأدمن فتح مباراة معتمدة");
+    },
+    [writeMatch, pushAudit],
   );
 
   const requestPowerCard = useCallback(
-    (matchId: string, teamCode: string, cardName: string) =>
-      update((s) => {
-        const card = seed.powerCards.find((c) => c.name === cardName);
-        if (!card) return s;
-        const used = s.usedCards.some(
-          (u) => u.teamCode === teamCode && u.cardName === cardName,
-        );
-        if (used) return s;
-        return audit(
-          {
-            ...s,
-            activeCards: {
-              ...s.activeCards,
-              [matchId]: {
-                teamCode,
-                cardName,
-                effect: card.effect_type as ActivePowerCard["effect"],
-              },
-            },
-            usedCards: [...s.usedCards, { teamCode, cardName, matchId }],
-          },
-          "تفعيل كارت قوة",
-          matchId,
-          `${cardName} — ${teamCode}`,
-        );
-      }),
-    [update, audit, seed],
+    (matchId: string, teamCode: string, cardName: string) => {
+      const card = seedRef.current.powerCards.find((c) => c.name === cardName);
+      if (!card) return;
+      const used = liveRef.current.usages.some(
+        (u) =>
+          u.teamCode === teamCode &&
+          u.cardName === cardName &&
+          (u.status === "approved" || u.status === "applied"),
+      );
+      if (used) return;
+      const usage: CardUsageLite = {
+        id: eventUuid(),
+        matchId,
+        teamCode,
+        cardName,
+        effect: card.effect_type,
+        status: "approved",
+        teamCardId: idsRef.current?.teamCardId[`${teamCode}|${cardName}`] ?? "",
+      };
+      setLive((l) => ({ ...l, usages: [...l.usages, usage] }));
+      writeUsage(usage);
+      pushAudit("تفعيل كارت قوة", matchId, `${cardName} — ${teamCode}`);
+    },
+    [writeUsage, pushAudit],
   );
 
   const clearPowerCard = useCallback(
-    (matchId: string) =>
-      update((s) => {
-        const active = s.activeCards[matchId];
-        if (!active) return s;
-        return audit(
-          {
-            ...s,
-            activeCards: { ...s.activeCards, [matchId]: undefined },
-            // الإلغاء قبل الاستهلاك يرد الكارت لرصيد الفريق
-            usedCards: s.usedCards.filter(
-              (u) =>
-                !(
-                  u.teamCode === active.teamCode &&
-                  u.cardName === active.cardName &&
-                  u.matchId === matchId
-                ),
-            ),
-          },
-          "إلغاء كارت قوة",
-          matchId,
-          `${active.cardName} — ${active.teamCode} (أُعيد للرصيد قبل الاستهلاك)`,
-        );
-      }),
-    [update, audit],
+    (matchId: string) => {
+      const active = liveRef.current.usages.find(
+        (u) => u.matchId === matchId && u.status === "approved",
+      );
+      if (!active) return;
+      // الإلغاء قبل الاستهلاك يرد الكارت لرصيد الفريق
+      setLive((l) => ({
+        ...l,
+        usages: l.usages.map((u) =>
+          u.id === active.id ? { ...u, status: "cancelled" as const } : u,
+        ),
+      }));
+      writeUsage({ ...active, status: "cancelled" });
+      pushAudit(
+        "إلغاء كارت قوة",
+        matchId,
+        `${active.cardName} — ${active.teamCode} (أُعيد للرصيد قبل الاستهلاك)`,
+      );
+    },
+    [writeUsage, pushAudit],
   );
 
   const addAdjustment = useCallback(
-    (adj: StandingAdjustment) =>
-      update((s) =>
-        audit(
-          { ...s, adjustments: [...s.adjustments, adj] },
-          "تعديل نقاط",
-          adj.teamCode,
-          `${adj.points > 0 ? "+" : ""}${adj.points} — ${adj.reason}`,
-        ),
-      ),
-    [update, audit],
+    (adj: StandingAdjustment) => {
+      setLive((l) => ({ ...l, adjustments: [...l.adjustments, adj] }));
+      const ids = idsRef.current;
+      if (ids) {
+        void liveWrite("insert_adjustment", {
+          adjustment: {
+            league_id: ids.leagueId,
+            team_id: ids.teamByCode[adj.teamCode],
+            points: adj.points,
+            reason: adj.reason,
+            source: adj.source,
+          },
+        });
+      }
+      pushAudit("تعديل نقاط", adj.teamCode, `${adj.points > 0 ? "+" : ""}${adj.points} — ${adj.reason}`);
+    },
+    [pushAudit],
   );
 
   const loadDemo = useCallback(() => {
-    setState((s) => ({ ...buildDemoState(), role: s.role }));
+    // القاعدة السحابية مشتركة بين كل الأجهزة — لا بيانات تجريبية فيها
+    console.warn("البيانات التجريبية معطلة في وضع Supabase المشترك");
   }, []);
 
   const resetAll = useCallback(() => {
-    setState((s) => ({ ...initialPersisted(), role: s.role }));
+    setLocal((s) => ({ ...initialLocal(), role: s.role }));
   }, []);
 
   const store: LeagueStore = {

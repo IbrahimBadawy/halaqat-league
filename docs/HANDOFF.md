@@ -80,13 +80,37 @@
   power_card)، الأطراف placeholders في home_side/away_side مع home_team_id
   يُملأ عند الحسم، matches.code = m1..m24 وplayers.code = A1-4 لتطابق الواجهة.
 
-### الخطوة التالية (لم تبدأ): مبادلة المخزن المحلي بـ Supabase
+## مكتمل: الموقع يعمل على Supabase + منشور على GitHub Pages ✅
 
-- الـ seam جاهز: الصفحات تكلم `lib/league/store.tsx` فقط.
-- المطلوب: `npm i @supabase/supabase-js` + عميل typed فوق `lib/supabase/types.ts`،
-  قراءة seed من الجداول بدل JSON، كتابة الأحداث/الحالات/التدقيق للجداول،
-  Realtime لصفحات المباشر، ثم Auth (username → بريد داخلي) وربط league_members.
-- النشر: ربط الريبو بـ Vercel (استيراد من GitHub) + ضبط env vars هناك.
+**العمارة الحالية** (الصفحات الـ20 لم تتغير — نفس واجهة `useLeague()`):
+
+- **القراءة**: `lib/league/remote.ts` يجلب كل الجداول بمفتاح publishable (RLS
+  قراءة عامة) ويحوّلها لنفس أشكال `LeagueSeed`/`PersistedState` بمفاتيح
+  الأكواد (m1..، A1..، A1-4). الـ seed المدمج (JSON) يبقى fallback فوريًا
+  عند انقطاع الشبكة، وأكواد generateStaticParams تُعدَّد منه.
+- **الكتابة**: حصريًا عبر Edge Function `live-write` (service-role داخليًا،
+  تحقق PIN، أفعال محددة بأعمدة whitelisted — لا كتابة أنون مباشرة على
+  الجداول). PIN الافتراضي 1234 (secret `LIVE_PIN` في الدالة؛ العميل يقرؤه
+  من localStorage مفتاح `halaqat-live-pin`). التحديث المتفائل محليًا +
+  إرسال غير متزامن.
+- **Realtime**: قناة واحدة على 7 جداول حية → إعادة جلب مدمجة (350ms debounce).
+  ساعة المباراة في `matches.clock` (jsonb) فتتزامن بين الأجهزة.
+- **المشتقات**: `lineupOverrides` صارت تُشتق من أحداث التبديل (التراجع يصحح
+  التشكيلة تلقائيًا)، وكروت القوة من `card_usages`
+  (approved=مفعّل، applied=مستهلك، cancelled=مسترد).
+- **محلي على الجهاز فقط**: الدور + التوقعات + منشورات المجتمع
+  (localStorage `halaqat-league-local-v1`). «تعبئة بيانات تجريبية» معطلة
+  في وضع القاعدة المشتركة.
+- **النشر**: تصدير ثابت (`output: "export"`، 78 صفحة، basePath
+  `/halaqat-league`) عبر `.github/workflows/deploy.yml` إلى
+  **https://ibrahimbadawy.github.io/halaqat-league/** — الريبو صار public
+  (شرط GitHub Pages المجاني).
+
+### المتبقي للمراحل التالية
+
+- Auth حقيقي (username → بريد داخلي) + league_members ثم إزالة بوابة PIN
+  وتشديد سياسات الكتابة على الأدوار، وتغيير `LIVE_PIN` من لوحة Supabase.
+- نقل التوقعات والمنشورات للقاعدة، Push، طابور أوفلاين (Dexie) للكونسول.
 
 ## المؤجل للمراحل التالية (بالترتيب المقترح)
 
