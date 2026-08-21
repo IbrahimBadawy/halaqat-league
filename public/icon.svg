@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#070E24"/>
+  <!-- التاج -->
+  <path d="M156 118 L186 158 L226 96 L256 150 L286 96 L326 158 L356 118 L356 176 L156 176 Z" fill="url(#g)"/>
+  <!-- الدرع الذهبي -->
+  <path d="M136 200 L376 200 L376 380 L256 460 L136 380 Z" fill="url(#g)"/>
+  <!-- الدرع الأزرق -->
+  <path d="M152 214 L360 214 L360 372 L256 440 L152 372 Z" fill="url(#b)"/>
+  <text x="256" y="352" font-family="Changa, Arial, sans-serif" font-size="150" font-weight="700" fill="#F5D271" text-anchor="middle">ح</text>
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F5D271"/>
+      <stop offset="1" stop-color="#B8871F"/>
+    </linearGradient>
+    <linearGradient id="b" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2B4FC2"/>
+      <stop offset="1" stop-color="#1E3A9E"/>
+    </linearGradient>
+  </defs>
+</svg>

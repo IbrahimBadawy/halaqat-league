@@ -1,0 +1,83 @@
+{
+  "league": {
+    "slug": "halaqat-summer-2026",
+    "name": "دوري الحلقات — صيف 2026",
+    "slogan": "التحدي يبدأ .. والبطولة لنا",
+    "timezone": "Africa/Cairo",
+    "theme": { "bg": "#070E24", "surface": "#0F1B3F", "gold": "#E0B24A", "shield": "#1E40AF" },
+    "rules": {
+      "points": { "win": 3, "draw": 1, "loss": 0 },
+      "halves": 2, "half_minutes": 8, "slot_minutes": 20, "_note": "المدة افتراض — عدّلها",
+      "final_duration_override_minutes": 30,
+      "substitutions": "unlimited",
+      "tiebreakers": ["points", "head_to_head", "goal_difference", "goals_for", "fair_play", "draw"],
+      "yellow_cards_for_suspension": 2, "red_card_suspension_matches": 1
+    },
+    "features": { "power_cards": true, "social": true, "competitions": true, "fans": false }
+  },
+  "venues": [
+    { "name": "ملعب 1", "availability": "all_slots" },
+    { "name": "ملعب 2", "availability": [
+      { "date": "2026-09-04", "slots": ["23:40", "00:00"] },
+      { "date": "2026-09-11", "slots": ["23:00"], "_note": "نصفا النهائي في نفس الوقت على ملعبين" }
+    ] }
+  ],
+  "match_days": ["2026-08-21", "2026-08-28", "2026-09-04", "2026-09-11"],
+  "slots": ["23:00", "23:20", "23:40", "00:00", "00:20", "00:40"],
+  "format": {
+    "stages": [
+      { "type": "groups", "groups": 2, "legs": 1, "qualify_per_group": 2 },
+      { "type": "knockout", "legs": 1, "third_place": true,
+        "semis": [ { "home": "1A", "away": "2B" }, { "home": "1B", "away": "2A" } ] }
+    ]
+  },
+  "teams": [
+    { "group": "A", "code": "A1", "name": "فؤش" },
+    { "group": "A", "code": "A2", "name": "زيد" },
+    { "group": "A", "code": "A3", "name": "غراب" },
+    { "group": "A", "code": "A4", "name": "لوكاكو" },
+    { "group": "A", "code": "A5", "name": "أحمد طارق" },
+    { "group": "B", "code": "B1", "name": "صعيدي" },
+    { "group": "B", "code": "B2", "name": "جدو" },
+    { "group": "B", "code": "B3", "name": "نعمان" },
+    { "group": "B", "code": "B4", "name": "الشيوخ" },
+    { "group": "B", "code": "B5", "name": "سلامة" }
+  ],
+  "players_per_team_placeholder": 7,
+  "fixtures": [
+    { "match_day": "2026-08-21", "slot": "23:00", "venue": "ملعب 1", "home": "A1", "away": "A2" },
+    { "match_day": "2026-08-21", "slot": "23:20", "venue": "ملعب 1", "home": "B1", "away": "B2" },
+    { "match_day": "2026-08-21", "slot": "23:40", "venue": "ملعب 1", "home": "A1", "away": "A3" },
+    { "match_day": "2026-08-21", "slot": "00:00", "venue": "ملعب 1", "home": "B1", "away": "B3" },
+    { "match_day": "2026-08-21", "slot": "00:20", "venue": "ملعب 1", "home": "A4", "away": "A5" },
+    { "match_day": "2026-08-21", "slot": "00:40", "venue": "ملعب 1", "home": "B4", "away": "B5" },
+
+    { "match_day": "2026-08-28", "slot": "23:00", "venue": "ملعب 1", "home": "A2", "away": "A3" },
+    { "match_day": "2026-08-28", "slot": "23:20", "venue": "ملعب 1", "home": "B2", "away": "B3" },
+    { "match_day": "2026-08-28", "slot": "23:40", "venue": "ملعب 1", "home": "A2", "away": "A4" },
+    { "match_day": "2026-08-28", "slot": "00:00", "venue": "ملعب 1", "home": "B2", "away": "B4" },
+    { "match_day": "2026-08-28", "slot": "00:20", "venue": "ملعب 1", "home": "A1", "away": "A5" },
+    { "match_day": "2026-08-28", "slot": "00:40", "venue": "ملعب 1", "home": "B1", "away": "B5" },
+
+    { "match_day": "2026-09-04", "slot": "23:00", "venue": "ملعب 1", "home": "A1", "away": "A4" },
+    { "match_day": "2026-09-04", "slot": "23:20", "venue": "ملعب 1", "home": "B1", "away": "B4" },
+    { "match_day": "2026-09-04", "slot": "23:40", "venue": "ملعب 1", "home": "A3", "away": "A4" },
+    { "match_day": "2026-09-04", "slot": "23:40", "venue": "ملعب 2", "home": "A2", "away": "A5" },
+    { "match_day": "2026-09-04", "slot": "00:00", "venue": "ملعب 1", "home": "B3", "away": "B4" },
+    { "match_day": "2026-09-04", "slot": "00:00", "venue": "ملعب 2", "home": "B2", "away": "B5" },
+    { "match_day": "2026-09-04", "slot": "00:20", "venue": "ملعب 1", "home": "A3", "away": "A5" },
+    { "match_day": "2026-09-04", "slot": "00:40", "venue": "ملعب 1", "home": "B3", "away": "B5" },
+
+    { "match_day": "2026-09-11", "slot": "23:00", "venue": "ملعب 1", "stage": "semi_1", "home": "1A", "away": "2B" },
+    { "match_day": "2026-09-11", "slot": "23:00", "venue": "ملعب 2", "stage": "semi_2", "home": "1B", "away": "2A" },
+    { "match_day": "2026-09-11", "slot": "00:00", "venue": "ملعب 1", "stage": "third_place", "home": "L_semi_1", "away": "L_semi_2" },
+    { "match_day": "2026-09-11", "slot": "00:30", "venue": "ملعب 1", "stage": "final", "home": "W_semi_1", "away": "W_semi_2", "duration_override_minutes": 30 }
+  ],
+  "power_cards": [
+    { "name": "الهدف بهدفين", "icon": "⚡", "effect_type": "goal_multiplier", "params": { "multiplier": 2, "scope": "next_goal" }, "usage_window": "live", "rarity": "rare", "description": "الهدف التالي لفريقك يُحتسب بهدفين" },
+    { "name": "وقت إضافي", "icon": "⏱️", "effect_type": "extra_time", "params": { "minutes": 3 }, "usage_window": "live", "rarity": "common", "description": "إضافة 3 دقائق لزمن المباراة" },
+    { "name": "الدرع", "icon": "🛡️", "effect_type": "shield", "params": { "cancels": "yellow_card" }, "usage_window": "live", "rarity": "common", "description": "إلغاء إنذار واحد للاعب من فريقك" },
+    { "name": "تبديل إضافي", "icon": "🔁", "effect_type": "extra_substitution", "params": { "count": 1 }, "usage_window": "live", "rarity": "common", "description": "تبديل إضافي فوق الحد المسموح" }
+  ],
+  "slogans": ["فريق واحد .. هدف واحد", "شغف لا ينتهي", "روح المنافسة"]
+}

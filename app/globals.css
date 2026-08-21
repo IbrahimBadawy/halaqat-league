@@ -1,0 +1,192 @@
+@import "tailwindcss";
+
+/* ————— رموز التصميم — من docs/design_handoff (الثيم الداكن افتراضي) ————— */
+:root {
+  --bg-base: #070e24;
+  --surface-1: #0f1b3f;
+  --surface-2: #14245a;
+  --gold: #e0b24a;
+  --gold-light: #f5d271;
+  --gold-mid: #d9a83c;
+  --gold-deep: #b8871f;
+  --text-1: #ffffff;
+  --text-2: #c9d1e6;
+  --text-3: #8b96b8;
+  --shield-1: #2b4fc2;
+  --shield-2: #1e3a9e;
+  --flame-1: #ff8a1f;
+  --flame-2: #e5731f;
+  --live: #e5484d;
+  --warn: #f4c430;
+  --green: #1e7f3a;
+  --green-text: #4cc07a;
+  --ink: #0b1230;
+  --border-soft: rgba(201, 209, 230, 0.12);
+  --border-softer: rgba(201, 209, 230, 0.08);
+  --font-display: "Changa", sans-serif;
+  --font-body: "IBM Plex Sans Arabic", sans-serif;
+}
+
+/* الثيم الفاتح للوحة الأدمن (ديسكتوب) */
+.admin-theme {
+  --bg-base: #eef2f9;
+  --surface-1: #ffffff;
+  --surface-2: #ffffff;
+  --text-1: #0b1230;
+  --text-2: #4a5578;
+  --text-3: #4a5578;
+  --gold: #9a7420;
+  --gold-light: #9a7420;
+  --border-soft: #e3e7f2;
+  --border-softer: #e3e7f2;
+}
+
+html {
+  background: var(--bg-base);
+}
+
+body {
+  background: var(--bg-base);
+  color: var(--text-1);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* الأرقام لاتينية دائمًا داخل عزل LTR بخط Changa */
+.num {
+  direction: ltr;
+  unicode-bidi: isolate;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-display);
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+/* بطاقة قياسية */
+.card {
+  background: linear-gradient(135deg, var(--surface-1), var(--surface-2));
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+}
+
+/* بطاقة المباشر: توهج أزرق أعلى + خطوط سرعة */
+.live-card {
+  background:
+    radial-gradient(ellipse 90% 80% at 50% -25%, rgba(43, 79, 194, 0.55), transparent 65%),
+    repeating-linear-gradient(115deg, rgba(245, 210, 113, 0.05) 0 2px, transparent 2px 24px),
+    linear-gradient(150deg, #122459, #0c1836);
+  border: 1px solid rgba(224, 178, 74, 0.45);
+  border-radius: 20px;
+  box-shadow: 0 0 30px rgba(224, 178, 74, 0.14);
+}
+
+/* توهج الملعب الأخضر أسفل الشاشة (عدة الحيوية) */
+.pitch-glow {
+  background: radial-gradient(
+      ellipse 130% 42% at 50% 112%,
+      rgba(30, 127, 58, 0.38),
+      transparent 62%
+    ),
+    var(--bg-base);
+}
+
+/* النتيجة الحية بوميض ذهبي متحرك */
+.gold-shimmer {
+  background: linear-gradient(90deg, #e0b24a 30%, #fff6d6 50%, #e0b24a 70%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shim 2.8s linear infinite;
+}
+
+@keyframes shim {
+  from {
+    background-position: 200% center;
+  }
+  to {
+    background-position: -200% center;
+  }
+}
+
+/* نبض شارة مباشر */
+@keyframes lp {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+.live-dot {
+  animation: lp 1.2s infinite;
+}
+
+/* طفو شريط "هدف الآن" */
+@keyframes fl {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+.float-banner {
+  animation: fl 2s ease-in-out infinite;
+}
+
+/* الزر الذهبي الأساسي (CTA الوحيد) */
+.btn-gold {
+  background: linear-gradient(160deg, var(--gold-light), var(--gold-mid));
+  color: var(--ink);
+  font-weight: 700;
+  border-radius: 13px;
+}
+
+.pill {
+  border-radius: 999px;
+}
+
+/* شريط عنوان قسم: شريط ذهبي + Changa */
+.section-bar {
+  width: 4px;
+  height: 18px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, var(--gold-light), var(--gold-mid));
+}
+
+/* إخفاء شريط التمرير في الأشرطة الأفقية */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+/* شريط الشعار المائل من هوية البوستر */
+.slogan-ribbon {
+  transform: skewX(-6deg);
+  background: linear-gradient(90deg, var(--gold-light), var(--gold-mid));
+  color: var(--ink);
+}
+
+/* الورقة السفلية */
+.sheet-backdrop {
+  background: rgba(4, 8, 20, 0.58);
+}
+.sheet {
+  background: linear-gradient(180deg, var(--surface-1), #0c1836);
+  border-radius: 22px 22px 0 0;
+  border-top: 1px solid rgba(224, 178, 74, 0.35);
+}
+
+/* بانر كارت القوة — البرتقالي حصري للكروت */
+.power-banner {
+  background: linear-gradient(90deg, var(--flame-1), var(--flame-2));
+  color: #fff;
+  box-shadow: 0 0 22px rgba(255, 138, 31, 0.45);
+}
