@@ -184,8 +184,8 @@ const APP_STATUSES: MatchStatus[] = [
 
 const DEFAULT_RULES: LeagueRules = {
   points: { win: 3, draw: 1, loss: 0 },
-  halves: 2,
-  half_minutes: 8,
+  halves: 1,
+  half_minutes: 17,
   slot_minutes: 20,
   final_duration_override_minutes: 30,
   substitutions: "unlimited",

@@ -269,6 +269,14 @@ export interface LeagueStore {
   setMatchHalves: (matchId: string, halves: 1 | 2 | null) => void;
   /** قفل (archived) أو فتح (active) دوري */
   setLeagueStatus: (leagueId: string, status: "active" | "archived") => Promise<string | null>;
+  /**
+   * تصفير دوري (مدير المنصة فقط): مسح كل ما نتج عن اللعب وإرجاع المباريات
+   * «مجدولة». لا يمس الفرق واللاعبين والحسابات والجدول. لا رجعة فيه.
+   */
+  resetLeague: (
+    leagueId: string,
+    includePosts: boolean,
+  ) => Promise<{ error?: string; detail?: string }>;
   adminCreateAccount: (
     username: string,
     password: string,
@@ -1081,6 +1089,23 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const resetLeague = useCallback(
+    async (
+      leagueId: string,
+      includePosts: boolean,
+    ): Promise<{ error?: string; detail?: string }> => {
+      const res = await liveCall("reset_league", {
+        league_id: leagueId,
+        include_posts: includePosts,
+        confirm: "RESET",
+      });
+      if (!res.ok) return { error: res.error ?? "تعذّر التصفير" };
+      await refresh();
+      return { detail: String(res.data?.detail ?? "") };
+    },
+    [refresh],
+  );
+
   const adminCreateLeague = useCallback(
     async (payload: NewLeaguePayload): Promise<{ error?: string; leagueId?: string }> => {
       const res = await liveCall("create_league", { league: payload });
@@ -1723,6 +1748,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     adminSetRoles,
     adminDeleteAccount,
     setLeagueStatus,
+    resetLeague,
     canModerate: (user?.roles ?? []).some((r) => r === "admin" || r === "moderator"),
     bans: live.bans,
     deletePost,

@@ -36,8 +36,8 @@ export default function NewLeaguePage() {
   const [daysText, setDaysText] = useState("");
   const [slotsText, setSlotsText] = useState("23:00\n23:20\n23:40\n00:00\n00:20\n00:40");
   const [venuesText, setVenuesText] = useState("ملعب 1");
-  const [halfMinutes, setHalfMinutes] = useState(8);
-  const [halvesCount, setHalvesCount] = useState<1 | 2>(2);
+  const [halfMinutes, setHalfMinutes] = useState(17);
+  const [halvesCount, setHalvesCount] = useState<1 | 2>(1);
   const [slotMinutes, setSlotMinutes] = useState(20);
   const [qualify, setQualify] = useState(2);
   const [yellowLimit, setYellowLimit] = useState(2);
@@ -272,7 +272,7 @@ export default function NewLeaguePage() {
             <div className="text-[12.5px] font-bold">
               نظام المباراة
               <div className="mt-1 flex overflow-hidden rounded-[10px]" style={{ border: BORDER }}>
-                {([2, 1] as const).map((h) => (
+                {([1, 2] as const).map((h) => (
                   <button
                     key={h}
                     onClick={() => setHalvesCount(h)}

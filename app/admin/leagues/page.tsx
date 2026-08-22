@@ -4,11 +4,153 @@
 // يمنع التسجيل والانضمام ويبقى مقروءًا) أو إعادة فتحه، وإنشاء دوري جديد.
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import AdminNav from "@/components/nav/AdminNav";
 import { useLeague } from "@/lib/league/store";
 
 const BORDER = "1px solid #E3E7F2";
+/** ثوانٍ إجبارية بين التأكيد الأول والتأكيد النهائي للتصفير */
+const RESET_GAP_SECONDS = 10;
+
+/**
+ * منطقة الخطر — تصفير دوري. مدير المنصة وحده يراها (والبوابة تتحقق كذلك،
+ * فإخفاء الزر ليس هو الحماية). تأكيدان بينهما 10 ثوانٍ إجبارية.
+ * مكوّن على مستوى الملف: صفحات هذا المشروع تُعاد رندرتها مع Realtime،
+ * وأي مكوّن ذي حالة يُعرَّف داخل مكوّن آخر يفقد حالته عند كل رندر.
+ */
+function ResetLeagueDanger({ league }: { league: { id: string; name: string } }) {
+  const { user, resetLeague } = useLeague();
+  const [stage, setStage] = useState<"idle" | "wait" | "ready" | "running" | "done">("idle");
+  const [left, setLeft] = useState(RESET_GAP_SECONDS);
+  const [withPosts, setWithPosts] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // العدّاد بين التأكيدين — لا يبدأ إلا بعد التأكيد الأول
+  useEffect(() => {
+    if (stage !== "wait") return;
+    if (left <= 0) {
+      setStage("ready");
+      return;
+    }
+    const t = setTimeout(() => setLeft((n) => n - 1), 1000);
+    return () => clearTimeout(t);
+  }, [stage, left]);
+
+  if (!user?.isPlatformAdmin) return null;
+
+  const cancel = () => {
+    setStage("idle");
+    setLeft(RESET_GAP_SECONDS);
+    setError(null);
+  };
+
+  const panelOpen = stage === "wait" || stage === "ready" || stage === "running";
+
+  return (
+    <div className="mt-3 rounded-[12px] p-3" style={{ background: "#FEF3F2", border: "1px solid #FECDCA" }}>
+      <p className="mb-2 text-[12.5px] font-bold" style={{ color: "#B42318" }}>
+        ⚠️ منطقة الخطر — مدير المنصة فقط
+      </p>
+
+      {stage === "idle" || stage === "done" ? (
+        <>
+          <button
+            onClick={() => {
+              setResult(null);
+              setError(null);
+              setLeft(RESET_GAP_SECONDS);
+              setStage("wait");
+            }}
+            className="h-10 rounded-[10px] px-4 text-[13px] font-bold"
+            style={{ background: "#fff", color: "#B42318", border: "1px solid #FDA29B" }}
+          >
+            🧨 تصفير بيانات هذا الدوري
+          </button>
+          {result ? (
+            <p className="mt-2 text-[12.5px] font-semibold" style={{ color: "#067647" }}>
+              ✓ {result}
+            </p>
+          ) : null}
+        </>
+      ) : null}
+
+      {panelOpen ? (
+        <div>
+          <p className="mb-1.5 text-[13px] font-bold" style={{ color: "#B42318" }}>
+            تصفير «{league.name}» — لا رجعة فيه
+          </p>
+          <p className="mb-1 text-[12.5px]" style={{ color: "var(--text-2)" }}>
+            <b>يُمسح:</b> كل الأحداث والنتائج والتشكيلات وتقارير المباريات
+            واستخدامات كروت القوة وتعديلات النقاط والتوقعات وسجل التدقيق،
+            وكل المباريات ترجع «مجدولة».
+          </p>
+          <p className="mb-2 text-[12.5px]" style={{ color: "var(--text-2)" }}>
+            <b>لا يُمس:</b> الفرق واللاعبون وأرقام القمصان والحسابات وأكواد
+            الانضمام والجدول (المواعيد والملاعب والمدد).
+          </p>
+
+          <label className="mb-2.5 flex items-center gap-2 text-[12.5px] font-semibold" style={{ color: "var(--text-1)" }}>
+            <input
+              type="checkbox"
+              checked={withPosts}
+              disabled={stage === "running"}
+              onChange={(e) => setWithPosts(e.target.checked)}
+              className="h-4 w-4"
+            />
+            امسح منشورات المجتمع كمان
+          </label>
+
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              disabled={stage !== "ready"}
+              onClick={async () => {
+                setStage("running");
+                setError(null);
+                const res = await resetLeague(league.id, withPosts);
+                if (res.error) {
+                  setError(res.error);
+                  setStage("ready");
+                  return;
+                }
+                setResult(res.detail || "تم تصفير الدوري");
+                setLeft(RESET_GAP_SECONDS);
+                setStage("done");
+              }}
+              className="h-10 rounded-[10px] px-4 text-[13px] font-bold text-white disabled:opacity-45"
+              style={{ background: "#B42318" }}
+            >
+              {stage === "running"
+                ? "جارٍ التصفير…"
+                : stage === "ready"
+                  ? "🧨 تأكيد نهائي — صفّر الآن"
+                  : `تأكيد نهائي بعد ${left} ث`}
+            </button>
+            <button
+              disabled={stage === "running"}
+              onClick={cancel}
+              className="h-10 rounded-[10px] px-4 text-[13px] font-bold disabled:opacity-45"
+              style={{ background: "#fff", color: "var(--text-1)", border: BORDER }}
+            >
+              إلغاء
+            </button>
+          </div>
+
+          <p className="mt-2 text-[12px]" style={{ color: "var(--text-2)" }}>
+            {stage === "ready"
+              ? "التأكيد الأول تم — الزر الأحمر ينفّذ فورًا."
+              : "التأكيد الأول تم — انتظر انتهاء العدّاد قبل التأكيد النهائي."}
+          </p>
+          {error ? (
+            <p className="mt-1.5 text-[12.5px] font-bold" style={{ color: "#B42318" }}>
+              {error}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 export default function AdminLeaguesPage() {
   const store = useLeague();
@@ -95,6 +237,7 @@ export default function AdminLeaguesPage() {
                     {busyFor === l.id ? "لحظات…" : locked ? "🔓 إعادة فتح الدوري" : "🔒 قفل الدوري (أرشفة)"}
                   </button>
                 </div>
+                <ResetLeagueDanger league={{ id: l.id, name: l.name }} />
               </div>
             );
           })}

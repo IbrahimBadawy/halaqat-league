@@ -7,7 +7,7 @@
     "theme": { "bg": "#070E24", "surface": "#0F1B3F", "gold": "#E0B24A", "shield": "#1E40AF" },
     "rules": {
       "points": { "win": 3, "draw": 1, "loss": 0 },
-      "halves": 2, "half_minutes": 8, "slot_minutes": 20, "_note": "المدة افتراض — عدّلها",
+      "halves": 1, "half_minutes": 17, "slot_minutes": 20, "_note": "الافتراضي: شوط واحد 17 دقيقة — يُخصَّص لكل مباراة من محرر الجدول",
       "final_duration_override_minutes": 30,
       "substitutions": "unlimited",
       "tiebreakers": ["points", "head_to_head", "goal_difference", "goals_for", "fair_play", "draw"],

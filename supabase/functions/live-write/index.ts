@@ -16,21 +16,23 @@ const admin = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
 
-/** هوية حامل التوكن وأدواره (مدير المنصة يُحتسب admin تلقائيًا) */
+/** هوية حامل التوكن وأدواره (مدير المنصة يُحتسب admin تلقائيًا، وعلمه منفصل
+ *  لأن الأفعال المدمِّرة مثل تصفير الدوري حكرٌ عليه وحده) */
 async function authInfo(
   authHeader: string | null,
-): Promise<{ uid: string | null; roles: string[] }> {
+): Promise<{ uid: string | null; roles: string[]; platform: boolean }> {
   const token = authHeader?.replace(/^Bearer\s+/i, "");
-  if (!token) return { uid: null, roles: [] };
+  if (!token) return { uid: null, roles: [], platform: false };
   const { data, error } = await admin.auth.getUser(token);
-  if (error || !data.user) return { uid: null, roles: [] };
+  if (error || !data.user) return { uid: null, roles: [], platform: false };
   const [profileQ, memberQ] = await Promise.all([
     admin.from("profiles").select("is_platform_admin").eq("id", data.user.id).maybeSingle(),
     admin.from("league_members").select("roles").eq("user_id", data.user.id).eq("status", "active"),
   ]);
   const roles = (memberQ.data ?? []).flatMap((r) => r.roles as string[]);
-  if (profileQ.data?.is_platform_admin && !roles.includes("admin")) roles.push("admin");
-  return { uid: data.user.id, roles };
+  const platform = profileQ.data?.is_platform_admin === true;
+  if (platform && !roles.includes("admin")) roles.push("admin");
+  return { uid: data.user.id, roles, platform };
 }
 
 /** كروت القوة الافتراضية للدوريات الجديدة */
@@ -126,12 +128,18 @@ Deno.serve(async (req: Request) => {
   ];
   // أفعال الإشراف على المجتمع: أدمن أو مشرف
   const MOD_ACTIONS = ["delete_post", "ban_poster", "unban_poster"];
+  // أفعال مدمِّرة لا رجعة فيها — مدير المنصة وحده (ولا حتى أدمن الدوري)
+  const PLATFORM_ACTIONS = ["reset_league"];
   const STAFF_ROLES = ["admin", "referee", "recorder"];
 
-  let auth: { uid: string | null; roles: string[] } = { uid: null, roles: [] };
+  let auth: { uid: string | null; roles: string[]; platform: boolean } =
+    { uid: null, roles: [], platform: false };
   if (!PUBLIC_ACTIONS.includes(action)) {
     auth = await authInfo(req.headers.get("Authorization"));
-    if (USER_ACTIONS.includes(action)) {
+    if (PLATFORM_ACTIONS.includes(action)) {
+      if (!auth.uid) return json({ error: "سجّل دخولك أولًا" }, 401);
+      if (!auth.platform) return json({ error: "مدير المنصة وحده يملك هذا" }, 403);
+    } else if (USER_ACTIONS.includes(action)) {
       if (!auth.uid) return json({ error: "سجّل دخولك أولًا" }, 401);
     } else {
       const needed = ADMIN_ACTIONS.includes(action)
@@ -565,8 +573,8 @@ Deno.serve(async (req: Request) => {
         const rules = {
           points: { win: 3, draw: 1, loss: 0 },
           // شوط واحد أو شوطان — من الويزارد، وقابل للتخصيص لكل مباراة لاحقًا
-          halves: Number(L.rules?.halves) === 1 ? 1 : 2,
-          half_minutes: Number(L.rules?.half_minutes) || 8,
+          halves: Number(L.rules?.halves) === 2 ? 2 : 1,
+          half_minutes: Number(L.rules?.half_minutes) || 17,
           slot_minutes: Number(L.rules?.slot_minutes) || 20,
           final_duration_override_minutes: Number(L.rules?.final_duration_override_minutes) || 30,
           substitutions: "unlimited",
@@ -708,6 +716,93 @@ Deno.serve(async (req: Request) => {
         }
 
         return json({ ok: true, league_id: leagueId });
+      }
+      case "reset_league": {
+        // تصفير دوري: يمسح كل ما نتج عن اللعب ويعيد المباريات «مجدولة».
+        // لا يمس: الفرق واللاعبين والحسابات وأكواد الانضمام والجدول والمدد.
+        // مدير المنصة وحده (فُحص أعلاه) + كلمة تأكيد داخل الحمولة نفسها.
+        if (!UUID_RE.test(String(p.league_id))) return json({ error: "bad_id" }, 400);
+        if (String(p.confirm) !== "RESET") return json({ error: "confirm_required" }, 400);
+        const leagueId = String(p.league_id);
+        const withPosts = p.include_posts === true;
+
+        const lg = await admin
+          .from("leagues").select("name").eq("id", leagueId).maybeSingle();
+        if (lg.error) throw lg.error;
+        if (!lg.data) return json({ error: "لا يوجد دوري بهذا المعرّف" }, 404);
+
+        const mq = await admin.from("matches").select("id").eq("league_id", leagueId);
+        if (mq.error) throw mq.error;
+        const matchIds = (mq.data ?? []).map((m) => m.id as string);
+
+        const tq = await admin.from("teams").select("id").eq("league_id", leagueId);
+        if (tq.error) throw tq.error;
+        const teamIds = (tq.data ?? []).map((t) => t.id as string);
+        let cardIds: string[] = [];
+        if (teamIds.length) {
+          const cq = await admin.from("team_cards").select("id").in("team_id", teamIds);
+          if (cq.error) throw cq.error;
+          cardIds = (cq.data ?? []).map((c) => c.id as string);
+        }
+
+        const wiped: Record<string, number> = {};
+        const bump = (table: string, count: number | null) => {
+          wiped[table] = (wiped[table] ?? 0) + (count ?? 0);
+        };
+
+        if (matchIds.length) {
+          for (const table of ["match_events", "match_lineups", "match_reports", "card_usages"]) {
+            const r = await admin.from(table).delete({ count: "exact" }).in("match_id", matchIds);
+            if (r.error) throw r.error;
+            bump(table, r.count);
+          }
+        }
+        // استخدامات كروت بلا مباراة (طلب لم يُطبَّق) ترجع للرصيد كذلك
+        if (cardIds.length) {
+          const r = await admin
+            .from("card_usages").delete({ count: "exact" }).in("team_card_id", cardIds);
+          if (r.error) throw r.error;
+          bump("card_usages", r.count);
+        }
+        for (const table of withPosts
+          ? ["standing_adjustments", "predictions", "posts", "audit_log"]
+          : ["standing_adjustments", "predictions", "audit_log"]) {
+          const r = await admin.from(table).delete({ count: "exact" }).eq("league_id", leagueId);
+          if (r.error) throw r.error;
+          bump(table, r.count);
+        }
+
+        const upd = await admin
+          .from("matches")
+          .update({
+            status: "scheduled", clock: null, home_score: null, away_score: null,
+            home_pens: null, away_pens: null, winner_team_id: null, locked: false,
+          })
+          .eq("league_id", leagueId);
+        if (upd.error) throw upd.error;
+
+        // أطراف الإقصائيات ترجع رموزًا (1A / W_semi_1) حتى تُحسم من جديد
+        const kn = await admin
+          .from("matches")
+          .update({ home_team_id: null, away_team_id: null })
+          .eq("league_id", leagueId)
+          .neq("stage_kind", "group");
+        if (kn.error) throw kn.error;
+
+        const detail =
+          `تصفير الدوري: ${wiped.match_events ?? 0} حدثًا، ` +
+          `${wiped.match_reports ?? 0} تقريرًا، ${wiped.match_lineups ?? 0} صف تشكيلة، ` +
+          `${wiped.card_usages ?? 0} استخدام كارت، ${wiped.standing_adjustments ?? 0} تعديل نقاط، ` +
+          `${wiped.predictions ?? 0} توقعًا` +
+          (withPosts ? `، ${wiped.posts ?? 0} منشورًا` : "، والمنشورات لم تُمس") +
+          ` — و${matchIds.length} مباراة رجعت «مجدولة».`;
+        const audit = await admin.from("audit_log").insert({
+          league_id: leagueId, actor_id: auth.uid, actor_role: "admin",
+          action: "تصفير الدوري", entity: "league", entity_id: leagueId, detail,
+        });
+        if (audit.error) throw audit.error;
+
+        return json({ ok: true, wiped, matches: matchIds.length, detail });
       }
       default:
         return json({ error: "unknown_action" }, 400);
