@@ -182,6 +182,7 @@ export default function AdminSchedulePage() {
                       <th className="px-2 py-2 text-start">الليلة</th>
                       <th className="px-2 py-2 text-start">الفترة</th>
                       <th className="px-2 py-2 text-start">الملعب</th>
+                      <th className="px-2 py-2 text-start">المدة (د)</th>
                       <th className="px-2 py-2 text-start">إجراء</th>
                     </tr>
                   </thead>
@@ -271,6 +272,27 @@ export default function AdminSchedulePage() {
                               </select>
                             </td>
                             <td className="px-2 py-2.5">
+                              {/* مدة مخصصة (17، 30...) — فارغ = مدة الدوري الافتراضية */}
+                              <input
+                                key={`${m.id}-${m.durationOverrideMinutes ?? "def"}`}
+                                type="number"
+                                min={5}
+                                max={120}
+                                defaultValue={m.durationOverrideMinutes ?? ""}
+                                placeholder={String(seed.rules.half_minutes * seed.rules.halves)}
+                                disabled={locked}
+                                onBlur={(e) => {
+                                  const v = e.target.value.trim();
+                                  const n = v === "" ? null : Math.max(5, Math.min(120, Number(v) || 0));
+                                  if ((n ?? undefined) !== m.durationOverrideMinutes && (n === null || n >= 5)) {
+                                    store.setMatchDuration(m.id, n);
+                                  }
+                                }}
+                                className="num h-10 w-full min-w-[72px] rounded-[10px] px-2 text-[13px] font-semibold disabled:opacity-45"
+                                style={selectStyle}
+                              />
+                            </td>
+                            <td className="px-2 py-2.5">
                               <div className="flex items-center gap-2">
                                 <button
                                   disabled={locked}
@@ -289,7 +311,7 @@ export default function AdminSchedulePage() {
                             </td>
                           </tr>
                           <tr style={{ background: conflicted ? "#FFFBFA" : undefined }}>
-                            <td colSpan={5} className="px-4 pb-2.5" style={{ borderInlineStart: rowBorder }}>
+                            <td colSpan={6} className="px-4 pb-2.5" style={{ borderInlineStart: rowBorder }}>
                               {conflicted ? (
                                 <div className="flex flex-wrap gap-1.5">
                                   {rowConflicts.map((c, i) => (

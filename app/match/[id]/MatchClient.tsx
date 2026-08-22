@@ -151,6 +151,24 @@ export default function MatchPage() {
             </span>
           </div>
         ) : null}
+
+        {/* زر البدء الصريح للطاقم: ضغطة واحدة = المباراة Live + فتح الكونسول */}
+        {canRecord && status === "scheduled" && !store.leagueLocked ? (
+          <button
+            onClick={() => {
+              store.startMatch(match.id);
+              router.push(`/match/${match.id}/console`);
+            }}
+            className="btn-gold mt-3 flex h-12 w-full items-center justify-center gap-2 text-[15px]"
+          >
+            ▶️ ابدأ المباراة الآن (Live)
+            {match.durationOverrideMinutes ? (
+              <span className="num text-[13px] font-semibold opacity-80">
+                · {match.durationOverrideMinutes} د
+              </span>
+            ) : null}
+          </button>
+        ) : null}
       </div>
 
       {/* التبويبات */}

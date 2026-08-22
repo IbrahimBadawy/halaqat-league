@@ -75,6 +75,41 @@ export type Database = {
           },
         ]
       }
+      banned_posters: {
+        Row: {
+          banned_username: string | null
+          created_at: string
+          device_key: string | null
+          id: string
+          reason: string
+          user_id: string | null
+        }
+        Insert: {
+          banned_username?: string | null
+          created_at?: string
+          device_key?: string | null
+          id?: string
+          reason?: string
+          user_id?: string | null
+        }
+        Update: {
+          banned_username?: string | null
+          created_at?: string
+          device_key?: string | null
+          id?: string
+          reason?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "banned_posters_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       card_usages: {
         Row: {
           applied_at: string | null
@@ -746,7 +781,9 @@ export type Database = {
       }
       posts: {
         Row: {
+          author_device: string | null
           author_name: string
+          author_user: string | null
           created_at: string
           id: string
           league_id: string
@@ -754,7 +791,9 @@ export type Database = {
           text: string
         }
         Insert: {
+          author_device?: string | null
           author_name: string
+          author_user?: string | null
           created_at?: string
           id?: string
           league_id: string
@@ -762,7 +801,9 @@ export type Database = {
           text: string
         }
         Update: {
+          author_device?: string | null
           author_name?: string
+          author_user?: string | null
           created_at?: string
           id?: string
           league_id?: string
@@ -770,6 +811,13 @@ export type Database = {
           text?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "posts_author_user_fkey"
+            columns: ["author_user"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "posts_league_id_fkey"
             columns: ["league_id"]
@@ -1189,6 +1237,10 @@ export type Database = {
       bump_post_likes: {
         Args: { p_post: string }
         Returns: undefined
+      }
+      is_moderator_anywhere: {
+        Args: Record<PropertyKey, never>
+        Returns: boolean
       }
       has_league_role: {
         Args: { p_league: string; p_roles: string[] }

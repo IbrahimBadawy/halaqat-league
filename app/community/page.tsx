@@ -19,6 +19,7 @@ type FeedItem =
 export default function CommunityPage() {
   const { seed, matches, hydrated, statusOf, scoreOf, resolveSide, state, addPost, likePost, connected } =
     useLeague();
+  const { canModerate, deletePost, banPoster } = useLeague();
 
   const [author, setAuthor] = useState<string>(() =>
     typeof window === "undefined" ? "مشجع" : (localStorage.getItem(AUTHOR_KEY) ?? "مشجع"),
@@ -135,6 +136,7 @@ export default function CommunityPage() {
 
   function UserPostCard({ post }: { post: Post }) {
     const liked = post.likes > 0;
+    const [confirming, setConfirming] = useState<null | "delete" | "ban">(null);
     return (
       <div className="card mb-2.5 p-3.5">
         <div className="mb-2 flex items-center gap-2.5">
@@ -152,7 +154,7 @@ export default function CommunityPage() {
         <p className="whitespace-pre-wrap text-[14px] leading-relaxed" style={{ color: "var(--text-2)" }}>
           {post.text}
         </p>
-        <div className="mt-2.5 flex">
+        <div className="mt-2.5 flex items-center gap-2">
           <button
             onClick={() => likePost(post.id)}
             className="pill px-3.5 py-1.5 text-[13px] font-semibold"
@@ -172,6 +174,52 @@ export default function CommunityPage() {
           >
             👍 <span className="num">{post.likes}</span>
           </button>
+
+          {/* أدوات الإشراف — أدمن/مشرف فقط */}
+          {canModerate ? (
+            confirming ? (
+              <span className="ms-auto flex flex-wrap items-center gap-1.5">
+                <span className="text-[12px] font-bold" style={{ color: "var(--live)" }}>
+                  {confirming === "delete" ? "حذف المنشور؟" : "حظر الناشر وحذف منشوره؟"}
+                </span>
+                <button
+                  onClick={() => {
+                    if (confirming === "delete") void deletePost(post.id);
+                    else void banPoster(post.id, "إساءة في المجتمع");
+                    setConfirming(null);
+                  }}
+                  className="pill px-3 py-1 text-[12px] font-bold text-white"
+                  style={{ background: "var(--live)" }}
+                >
+                  تأكيد
+                </button>
+                <button
+                  onClick={() => setConfirming(null)}
+                  className="pill px-2.5 py-1 text-[12px] font-semibold"
+                  style={{ background: "rgba(255,255,255,.08)", color: "var(--text-2)" }}
+                >
+                  تراجع
+                </button>
+              </span>
+            ) : (
+              <span className="ms-auto flex gap-1.5">
+                <button
+                  onClick={() => setConfirming("delete")}
+                  className="pill px-2.5 py-1 text-[12px] font-semibold"
+                  style={{ background: "rgba(229,72,77,.1)", color: "var(--live)", border: "1px solid rgba(229,72,77,.3)" }}
+                >
+                  🗑️ حذف
+                </button>
+                <button
+                  onClick={() => setConfirming("ban")}
+                  className="pill px-2.5 py-1 text-[12px] font-semibold"
+                  style={{ background: "rgba(229,72,77,.16)", color: "var(--live)", border: "1px solid rgba(229,72,77,.45)" }}
+                >
+                  🚫 حظر
+                </button>
+              </span>
+            )
+          ) : null}
         </div>
       </div>
     );

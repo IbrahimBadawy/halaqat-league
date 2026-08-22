@@ -22,6 +22,7 @@ export default function AdminUsersPage() {
   const {
     hydrated, state, user, profilesAll, memberRoles, leagues, activeLeagueId,
     adminCreateAccount, adminResetPassword, adminSetRoles, adminDeleteAccount,
+    bans, unbanPoster,
   } = store;
 
   const [search, setSearch] = useState("");
@@ -282,6 +283,37 @@ export default function AdminUsersPage() {
               </button>
             </div>
           ) : null}
+        </section>
+
+        {/* المحظورون من النشر في المجتمع */}
+        <section className="mt-4 rounded-[16px] bg-white p-4" style={{ border: BORDER }}>
+          <h2 className="mb-1 font-display text-[16px] font-bold">
+            🚫 المحظورون من النشر <span className="num text-[13px]" style={{ color: "var(--text-2)" }}>({bans.length})</span>
+          </h2>
+          <p className="mb-3 text-[12.5px]" style={{ color: "var(--text-2)" }}>
+            الحظر يتم من صفحة المجتمع (زر 🚫 على المنشور المسيء) ويشمل جهاز
+            الناشر وحسابه معًا. من هنا تلغي الحظر.
+          </p>
+          {bans.length === 0 ? (
+            <p className="text-[13px]" style={{ color: "var(--text-2)" }}>لا محظورين حاليًا</p>
+          ) : (
+            bans.map((b) => (
+              <div key={b.id} className="flex flex-wrap items-center gap-2 border-b py-2 text-[13px]" style={{ borderColor: "#E3E7F2" }}>
+                <span className="font-bold">{b.username ?? "ناشر مجهول"}</span>
+                <span style={{ color: "var(--text-2)" }}>{b.reason}</span>
+                <span className="num text-[11.5px]" style={{ color: "var(--text-2)" }}>
+                  {new Date(b.createdAt).toLocaleDateString("en-GB")}
+                </span>
+                <button
+                  onClick={() => void unbanPoster(b.id)}
+                  className="ms-auto h-9 rounded-[8px] px-3 text-[12px] font-bold"
+                  style={{ background: "#ECFDF3", color: "#067647", border: "1px solid #ABEFC6" }}
+                >
+                  إلغاء الحظر
+                </button>
+              </div>
+            ))
+          )}
         </section>
       </div>
     </div>

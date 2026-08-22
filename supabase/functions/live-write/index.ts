@@ -70,7 +70,7 @@ const UUID_RE =
 const MATCH_FIELDS = [
   "status", "clock", "home_score", "away_score", "home_pens", "away_pens",
   "match_day", "slot", "venue_id", "home_team_id", "away_team_id",
-  "winner_team_id", "locked",
+  "winner_team_id", "locked", "duration_override_minutes",
 ];
 const EVENT_INSERT_FIELDS = [
   "id", "match_id", "team_id", "player_id", "secondary_player_id", "type",
@@ -95,7 +95,7 @@ const USAGE_FIELDS = [
 const AUDIT_FIELDS = [
   "id", "league_id", "actor_role", "action", "entity", "entity_id", "detail",
 ];
-const POST_FIELDS = ["id", "league_id", "author_name", "text"];
+const POST_FIELDS = ["id", "league_id", "author_name", "text", "author_device"];
 const PREDICTION_FIELDS = [
   "league_id", "match_id", "device_key", "home", "away",
 ];
@@ -119,11 +119,13 @@ Deno.serve(async (req: Request) => {
   // دخولًا فقط وتُدقَّق داخل حالتها. تسجيل الأحداث للطاقم، والاعتماد للحكم/
   // الأدمن، وتعديل النقاط والكباتن وإنشاء الدوريات للأدمن فقط.
   const PUBLIC_ACTIONS = ["insert_post", "like_post", "upsert_prediction"];
-  const USER_ACTIONS = ["request_join", "decide_join"];
+  const USER_ACTIONS = ["request_join", "decide_join", "update_player"];
   const ADMIN_ACTIONS = [
     "insert_adjustment", "set_captain", "create_league",
     "set_member_roles", "set_league_status",
   ];
+  // أفعال الإشراف على المجتمع: أدمن أو مشرف
+  const MOD_ACTIONS = ["delete_post", "ban_poster", "unban_poster"];
   const STAFF_ROLES = ["admin", "referee", "recorder"];
 
   let auth: { uid: string | null; roles: string[] } = { uid: null, roles: [] };
@@ -132,7 +134,11 @@ Deno.serve(async (req: Request) => {
     if (USER_ACTIONS.includes(action)) {
       if (!auth.uid) return json({ error: "سجّل دخولك أولًا" }, 401);
     } else {
-      const needed = ADMIN_ACTIONS.includes(action) ? ["admin"] : STAFF_ROLES;
+      const needed = ADMIN_ACTIONS.includes(action)
+        ? ["admin"]
+        : MOD_ACTIONS.includes(action)
+          ? ["admin", "moderator"]
+          : STAFF_ROLES;
       if (!auth.roles.some((r) => needed.includes(r))) {
         return json({ error: "forbidden", needed }, 403);
       }
@@ -279,17 +285,106 @@ Deno.serve(async (req: Request) => {
         const text = String(row.text ?? "").trim();
         const author = String(row.author_name ?? "").trim();
         if (!text || !author) return json({ error: "empty_post" }, 400);
+        // هوية الناشر: مفتاح الجهاز دائمًا + الحساب لو مسجّل دخوله
+        const poster = await authInfo(req.headers.get("Authorization"));
+        const device =
+          String(row.author_device ?? "").replace(/[^A-Za-z0-9-]/g, "").slice(0, 64) || null;
+        const orParts: string[] = [];
+        if (device) orParts.push(`device_key.eq.${device}`);
+        if (poster.uid) orParts.push(`user_id.eq.${poster.uid}`);
+        if (orParts.length > 0) {
+          const { data: banned } = await admin
+            .from("banned_posters").select("id").or(orParts.join(",")).limit(1);
+          if ((banned ?? []).length > 0) {
+            return json({ error: "أنت محظور من النشر — تواصل مع إدارة الدوري" }, 403);
+          }
+        }
         const { error } = await admin.from("posts").upsert(
           {
             ...row,
             text: text.slice(0, MAX_POST_LEN),
             author_name: author.slice(0, MAX_NAME_LEN),
+            author_device: device,
+            author_user: poster.uid,
             // الوقت من الخادم: لا نسمح لعميل بتثبيت منشوره أعلى الفيد بتاريخ مستقبلي
             created_at: new Date().toISOString(),
           },
           { onConflict: "id", ignoreDuplicates: true },
         );
         if (error) throw error;
+        return json({ ok: true });
+      }
+      case "delete_post": {
+        if (!UUID_RE.test(String(p.id))) return json({ error: "bad_id" }, 400);
+        const { error } = await admin.from("posts").delete().eq("id", p.id);
+        if (error) throw error;
+        return json({ ok: true });
+      }
+      case "ban_poster": {
+        // حظر صاحب منشور مسيء (بجهازه وحسابه معًا) + حذف المنشور
+        if (!UUID_RE.test(String(p.post_id))) return json({ error: "bad_id" }, 400);
+        const { data: post } = await admin
+          .from("posts")
+          .select("id, author_device, author_user, author_name")
+          .eq("id", p.post_id).maybeSingle();
+        if (!post) return json({ error: "المنشور غير موجود" }, 404);
+        let banned = false;
+        if (post.author_device || post.author_user) {
+          let uname: string | null = null;
+          if (post.author_user) {
+            const { data: prof } = await admin
+              .from("profiles").select("username").eq("id", post.author_user).maybeSingle();
+            uname = prof?.username ?? null;
+          }
+          const ins = await admin.from("banned_posters").insert({
+            device_key: post.author_device,
+            user_id: post.author_user,
+            reason: String(p.reason ?? "إساءة").slice(0, 120),
+            banned_username: uname ?? post.author_name,
+          });
+          if (ins.error) throw ins.error;
+          banned = true;
+        }
+        await admin.from("posts").delete().eq("id", post.id);
+        return json({ ok: true, banned });
+      }
+      case "unban_poster": {
+        if (!UUID_RE.test(String(p.ban_id))) return json({ error: "bad_id" }, 400);
+        const { error } = await admin.from("banned_posters").delete().eq("id", p.ban_id);
+        if (error) throw error;
+        return json({ ok: true });
+      }
+      case "update_player": {
+        // تعديل اسم/رقم قميص لاعب — أدمن أو كابتن فريقه
+        if (!UUID_RE.test(String(p.player_id))) return json({ error: "bad_id" }, 400);
+        const { data: player } = await admin
+          .from("players").select("id, team_id").eq("id", p.player_id).maybeSingle();
+        if (!player) return json({ error: "اللاعب غير موجود" }, 404);
+        const { data: team } = await admin
+          .from("teams").select("captain_id").eq("id", player.team_id).single();
+        const allowed = auth.roles.includes("admin") || team?.captain_id === auth.uid;
+        if (!allowed) return json({ error: "تعديل اللاعبين للأدمن أو كابتن الفريق" }, 403);
+        const patch: Record<string, unknown> = {};
+        if (p.shirt_number !== undefined) {
+          const n = Number(p.shirt_number);
+          if (!Number.isInteger(n) || n < 1 || n > 99) {
+            return json({ error: "رقم القميص من 1 إلى 99" }, 400);
+          }
+          patch.shirt_number = n;
+        }
+        if (p.name !== undefined) {
+          const nm = String(p.name).trim().slice(0, 40);
+          if (!nm) return json({ error: "الاسم مطلوب" }, 400);
+          patch.name = nm;
+        }
+        if (Object.keys(patch).length === 0) return json({ error: "لا تغيير" }, 400);
+        const { error } = await admin.from("players").update(patch).eq("id", player.id);
+        if (error) {
+          if ((error as { code?: string }).code === "23505") {
+            return json({ error: "هذا الرقم مستخدم في الفريق بالفعل" }, 409);
+          }
+          throw error;
+        }
         return json({ ok: true });
       }
       case "like_post": {

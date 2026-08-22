@@ -63,6 +63,14 @@ export interface ProfileInfo {
   isPlatformAdmin: boolean;
 }
 
+/** حظر ناشر من المجتمع — يراه الأدمن/المشرف فقط عبر RLS */
+export interface BanInfo {
+  id: string;
+  username: string | null;
+  reason: string;
+  createdAt: number;
+}
+
 export interface RemoteLive {
   statuses: Record<string, MatchStatus>;
   clocks: Record<string, ClockState>;
@@ -88,6 +96,8 @@ export interface RemoteLive {
   profiles: ProfileInfo[];
   /** userId -> أدوار العضوية في الدوري النشط */
   members: Record<string, string[]>;
+  /** المحظورون من النشر (فارغة لغير الأدمن/المشرف — RLS) */
+  bans: BanInfo[];
 }
 
 /** خرائط uuid ↔ أكواد الواجهة — تلزم للكتابة فقط */
@@ -125,6 +135,7 @@ export function emptyLive(): RemoteLive {
     joinCodes: {},
     profiles: [],
     members: {},
+    bans: [],
   };
 }
 
@@ -207,6 +218,16 @@ export async function fetchRemote(leagueId?: string): Promise<RemoteSnapshot> {
   for (const q of [venuesQ, teamsQ, stagesQ, matchesQ, templatesQ, adjQ, auditQ, postsQ, profilesQ, membersQ]) {
     if (q.error) throw q.error;
   }
+
+  // المحظورون: RLS يعيدها فارغة لغير الأدمن/المشرف — لا نفشل الجلب كله لأجلها
+  const bansQ = await supabase
+    .from("banned_posters").select("*").order("created_at", { ascending: false });
+  const bans: BanInfo[] = (bansQ.data ?? []).map((b) => ({
+    id: b.id,
+    username: b.banned_username,
+    reason: b.reason,
+    createdAt: Date.parse(b.created_at),
+  }));
 
   const venueIds = venuesQ.data!.map((v) => v.id);
   const teamIds = teamsQ.data!.map((t) => t.id);
@@ -549,7 +570,7 @@ export async function fetchRemote(leagueId?: string): Promise<RemoteSnapshot> {
     live: {
       statuses, clocks, events, reports, adjustments, starters, usages, audit,
       posts, predictions, playerTeams, captains, joinRequests, joinCodes,
-      profiles, members,
+      profiles, members, bans,
     },
     ids: {
       leagueId: league.id,

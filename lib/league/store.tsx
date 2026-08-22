@@ -36,6 +36,7 @@ import {
   liveCall,
   liveWrite,
   queueWrite,
+  type BanInfo,
   type CardUsageLite,
   type JoinRequestInfo,
   type LeagueInfo,
@@ -247,6 +248,23 @@ export interface LeagueStore {
   /** تعديل صلاحيات مستخدم في الدوري النشط (فارغة = إزالة العضوية) */
   adminSetRoles: (userId: string, roles: string[]) => Promise<string | null>;
   adminDeleteAccount: (userId: string) => Promise<string | null>;
+
+  // الإشراف على المجتمع
+  /** أدمن أو مشرف — يظهر له أزرار الحذف والحظر في المجتمع */
+  canModerate: boolean;
+  bans: BanInfo[];
+  deletePost: (postId: string) => Promise<string | null>;
+  /** يحظر صاحب المنشور (جهازًا وحسابًا) ويحذف المنشور */
+  banPoster: (postId: string, reason: string) => Promise<string | null>;
+  unbanPoster: (banId: string) => Promise<string | null>;
+
+  /** تعديل اسم/رقم قميص لاعب — أدمن أو كابتن فريقه */
+  updatePlayer: (
+    playerCode: string,
+    patch: { shirt?: number; name?: string },
+  ) => Promise<string | null>;
+  /** مدة مخصصة لمباراة بالدقائق (null = مدة الدوري الافتراضية) */
+  setMatchDuration: (matchId: string, minutes: number | null) => void;
   /** قفل (archived) أو فتح (active) دوري */
   setLeagueStatus: (leagueId: string, status: "active" | "archived") => Promise<string | null>;
   adminCreateAccount: (
@@ -1128,10 +1146,96 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
         league_id: ids.leagueId,
         author_name: author,
         text,
-        created_at: new Date(post.at).toISOString(),
+        // هوية الجهاز — تسمح للإشراف بحظر المسيء حتى بلا حساب
+        author_device: deviceKey(),
       },
     });
   }, []);
+
+  const deletePost = useCallback(
+    async (postId: string): Promise<string | null> => {
+      setLive((l) => ({ ...l, posts: l.posts.filter((p) => p.id !== postId) }));
+      const res = await liveCall("delete_post", { id: postId });
+      if (!res.ok) {
+        await refresh();
+        return res.error ?? "تعذّر الحذف";
+      }
+      return null;
+    },
+    [refresh],
+  );
+
+  const banPoster = useCallback(
+    async (postId: string, reason: string): Promise<string | null> => {
+      setLive((l) => ({ ...l, posts: l.posts.filter((p) => p.id !== postId) }));
+      const res = await liveCall("ban_poster", { post_id: postId, reason });
+      await refresh();
+      if (!res.ok) return res.error ?? "تعذّر الحظر";
+      return null;
+    },
+    [refresh],
+  );
+
+  const unbanPoster = useCallback(
+    async (banId: string): Promise<string | null> => {
+      const res = await liveCall("unban_poster", { ban_id: banId });
+      if (!res.ok) return res.error ?? "تعذّر إلغاء الحظر";
+      await refresh();
+      return null;
+    },
+    [refresh],
+  );
+
+  const updatePlayer = useCallback(
+    async (
+      playerCode: string,
+      patch: { shirt?: number; name?: string },
+    ): Promise<string | null> => {
+      const playerId = idsRef.current?.playerByCode[playerCode];
+      if (!playerId) return "اللاعب غير معروف";
+      const res = await liveCall("update_player", {
+        player_id: playerId,
+        ...(patch.shirt !== undefined ? { shirt_number: patch.shirt } : {}),
+        ...(patch.name !== undefined ? { name: patch.name } : {}),
+      });
+      if (!res.ok) return res.error ?? "تعذّر التعديل";
+      // تحديث متفائل للاسم/الرقم في الـ seed المعروض
+      setSeed((s) => ({
+        ...s,
+        players: s.players.map((pl) =>
+          pl.id === playerCode
+            ? { ...pl, shirt: patch.shirt ?? pl.shirt, name: patch.name ?? pl.name }
+            : pl,
+        ),
+      }));
+      return null;
+    },
+    [],
+  );
+
+  const setMatchDuration = useCallback(
+    (matchId: string, minutes: number | null) => {
+      setSeed((s) => ({
+        ...s,
+        matches: s.matches.map((m) =>
+          m.id === matchId ? { ...m, durationOverrideMinutes: minutes ?? undefined } : m,
+        ),
+      }));
+      const ids = idsRef.current;
+      if (ids) {
+        queueWrite("update_match", {
+          id: ids.matchByCode[matchId],
+          patch: { duration_override_minutes: minutes },
+        });
+      }
+      pushAudit(
+        "تغيير مدة مباراة",
+        matchId,
+        minutes ? `المدة ← ${minutes} دقيقة` : "عادت للمدة الافتراضية",
+      );
+    },
+    [pushAudit],
+  );
 
   const likePost = useCallback((postId: string) => {
     setLive((l) => ({
@@ -1572,6 +1676,13 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     adminSetRoles,
     adminDeleteAccount,
     setLeagueStatus,
+    canModerate: (user?.roles ?? []).some((r) => r === "admin" || r === "moderator"),
+    bans: live.bans,
+    deletePost,
+    banPoster,
+    unbanPoster,
+    updatePlayer,
+    setMatchDuration,
     adminCreateAccount,
     adminResetPassword,
     adminCreateLeague,

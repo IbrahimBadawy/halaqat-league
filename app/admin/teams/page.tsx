@@ -4,10 +4,66 @@
 // المعلقة — كلها في الدوري النشط.
 
 import Link from "next/link";
+import { useState } from "react";
 import { useLeague } from "@/lib/league/store";
 import AdminNav from "@/components/nav/AdminNav";
 
 const BORDER = "1px solid #E3E7F2";
+
+/** محرر لاعب واحد: رقم القميص + الاسم (للقمصان المرقمة والأسماء الحقيقية) */
+function PlayerRow({ code, shirt, name }: { code: string; shirt: number; name: string }) {
+  const { updatePlayer } = useLeague();
+  const [shirtDraft, setShirtDraft] = useState(String(shirt));
+  const [nameDraft, setNameDraft] = useState(name);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const dirty = Number(shirtDraft) !== shirt || nameDraft.trim() !== name;
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 border-t py-1.5" style={{ borderColor: "#E3E7F2" }}>
+      <input
+        type="number"
+        min={1}
+        max={99}
+        value={shirtDraft}
+        onChange={(e) => setShirtDraft(e.target.value)}
+        className="num h-9 w-[64px] rounded-[8px] px-2 text-center text-[13px] font-bold"
+        style={{ border: BORDER, background: "#fff" }}
+        aria-label="رقم القميص"
+      />
+      <input
+        value={nameDraft}
+        onChange={(e) => setNameDraft(e.target.value)}
+        className="h-9 min-w-0 flex-1 rounded-[8px] px-2.5 text-[13px]"
+        style={{ border: BORDER, background: "#fff" }}
+        aria-label="اسم اللاعب"
+      />
+      <button
+        disabled={!dirty || busy || !nameDraft.trim()}
+        onClick={async () => {
+          setBusy(true);
+          setMsg(null);
+          const m = await updatePlayer(code, {
+            shirt: Number(shirtDraft),
+            name: nameDraft.trim(),
+          });
+          setBusy(false);
+          setMsg(m ?? "✓");
+          if (m) setShirtDraft(String(shirt));
+        }}
+        className="h-9 rounded-[8px] px-3 text-[12px] font-bold text-white disabled:opacity-35"
+        style={{ background: "#067647" }}
+      >
+        {busy ? "…" : "حفظ"}
+      </button>
+      {msg ? (
+        <span className="text-[11.5px] font-bold" style={{ color: msg === "✓" ? "#067647" : "#B42318" }}>
+          {msg}
+        </span>
+      ) : null}
+    </div>
+  );
+}
 
 export default function AdminTeamsPage() {
   const store = useLeague();
@@ -15,6 +71,7 @@ export default function AdminTeamsPage() {
     hydrated, state, seed, profilesAll, captains, joinCodes, setCaptain,
     joinRequests, decideJoin, leagues, activeLeagueId,
   } = store;
+  const [rosterFor, setRosterFor] = useState<string | null>(null);
 
   if (!hydrated) return null;
   if (state.role !== "admin")
@@ -69,29 +126,54 @@ export default function AdminTeamsPage() {
           </p>
           <div className="grid gap-2 md:grid-cols-2">
             {seed.teams.map((t) => (
-              <div key={t.code} className="flex flex-wrap items-center gap-2 rounded-[12px] p-2.5" style={{ background: "#F7F9FE", border: BORDER }}>
-                <span className="num w-8 text-center text-[12px] font-bold" style={{ color: "#175CD3" }}>{t.code}</span>
-                <span className="min-w-0 flex-1 truncate text-[13.5px] font-bold">{t.name}</span>
-                {joinCodes[t.code] ? (
-                  <span className="num rounded-[8px] px-2 py-1 text-[12.5px] font-bold tracking-[2px]"
-                    style={{ background: "#FFFAEB", color: "#93370D", border: "1px solid #F4C430" }}
-                    title="كود الانضمام">
-                    {joinCodes[t.code]}
-                  </span>
+              <div key={t.code} className="rounded-[12px] p-2.5" style={{ background: "#F7F9FE", border: BORDER }}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="num w-8 text-center text-[12px] font-bold" style={{ color: "#175CD3" }}>{t.code}</span>
+                  <span className="min-w-0 flex-1 truncate text-[13.5px] font-bold">{t.name}</span>
+                  {joinCodes[t.code] ? (
+                    <span className="num rounded-[8px] px-2 py-1 text-[12.5px] font-bold tracking-[2px]"
+                      style={{ background: "#FFFAEB", color: "#93370D", border: "1px solid #F4C430" }}
+                      title="كود الانضمام">
+                      {joinCodes[t.code]}
+                    </span>
+                  ) : null}
+                  <select
+                    value={captains[t.code] ?? ""}
+                    onChange={(e) => void setCaptain(t.code, e.target.value || null)}
+                    className="h-10 min-w-[150px] rounded-[10px] px-2 text-[12.5px] font-semibold"
+                    style={{ border: BORDER, background: "#fff" }}
+                  >
+                    <option value="">— بلا كابتن —</option>
+                    {profilesAll.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.displayName} (@{p.username})
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => setRosterFor(rosterFor === t.code ? null : t.code)}
+                    className="h-10 rounded-[10px] px-3 text-[12.5px] font-bold"
+                    style={rosterFor === t.code
+                      ? { background: "#0B1230", color: "#fff" }
+                      : { background: "#fff", border: BORDER }}
+                  >
+                    👕 الأرقام والأسماء
+                  </button>
+                </div>
+
+                {rosterFor === t.code ? (
+                  <div className="mt-2">
+                    <p className="mb-1 text-[11.5px]" style={{ color: "var(--text-2)" }}>
+                      عدّل رقم القميص والاسم ثم «حفظ» — الرقم لا يتكرر داخل الفريق
+                    </p>
+                    {seed.players
+                      .filter((p) => p.teamCode === t.code)
+                      .sort((a, b) => a.shirt - b.shirt)
+                      .map((p) => (
+                        <PlayerRow key={p.id} code={p.id} shirt={p.shirt} name={p.name} />
+                      ))}
+                  </div>
                 ) : null}
-                <select
-                  value={captains[t.code] ?? ""}
-                  onChange={(e) => void setCaptain(t.code, e.target.value || null)}
-                  className="h-10 min-w-[150px] rounded-[10px] px-2 text-[12.5px] font-semibold"
-                  style={{ border: BORDER, background: "#fff" }}
-                >
-                  <option value="">— بلا كابتن —</option>
-                  {profilesAll.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.displayName} (@{p.username})
-                    </option>
-                  ))}
-                </select>
               </div>
             ))}
           </div>
