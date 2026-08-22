@@ -193,16 +193,19 @@ export default function AdminLeaguesPage() {
           {leagues.map((l) => {
             const active = l.id === activeLeagueId;
             const locked = l.status === "archived";
+            const draft = l.status === "draft"; // أُنشئ ولم ينطلق بعد
             return (
               <div key={l.id} className="rounded-[16px] bg-white p-4" style={{ border: active ? "2px solid #0B1230" : BORDER }}>
                 <div className="mb-1 flex items-center gap-2">
-                  <span className="text-[20px]">{locked ? "🔒" : "🏆"}</span>
+                  <span className="text-[20px]">{locked ? "🔒" : draft ? "📝" : "🏆"}</span>
                   <span className="min-w-0 flex-1 truncate font-display text-[16px] font-bold">{l.name}</span>
                   <span className="rounded-full px-2.5 py-0.5 text-[11.5px] font-bold"
                     style={locked
                       ? { background: "#F2F4F7", color: "var(--text-2)" }
-                      : { background: "#ECFDF3", color: "#067647" }}>
-                    {locked ? "مقفول (مؤرشف)" : "مفتوح"}
+                      : draft
+                        ? { background: "#FFFAEB", color: "#93370D" }
+                        : { background: "#ECFDF3", color: "#067647" }}>
+                    {locked ? "منتهٍ (مؤرشف)" : draft ? "لم يبدأ (مسودة)" : "مفتوح"}
                   </span>
                 </div>
                 <p className="mb-3 text-[12.5px]" style={{ color: "var(--text-2)" }}>
@@ -219,22 +222,30 @@ export default function AdminLeaguesPage() {
                     disabled={busyFor === l.id}
                     onClick={async () => {
                       setBusyFor(l.id);
-                      const next = locked ? "active" : "archived";
+                      const next = locked || draft ? "active" : "archived";
                       const m = await setLeagueStatus(l.id, next);
                       setBusyFor(null);
                       setMsg(
                         m ??
                           (next === "archived"
                             ? `قُفل «${l.name}» ✓ — النتائج تبقى معروضة، ولا تسجيل أو انضمام جديدًا`
-                            : `فُتح «${l.name}» ✓`),
+                            : draft
+                              ? `انطلق «${l.name}» ✓ — صار دوريًا مفتوحًا`
+                              : `فُتح «${l.name}» ✓`),
                       );
                     }}
                     className="h-10 rounded-[10px] px-4 text-[13px] font-bold disabled:opacity-40"
-                    style={locked
+                    style={locked || draft
                       ? { background: "#ECFDF3", color: "#067647", border: "1px solid #ABEFC6" }
                       : { background: "#FFFAEB", color: "#93370D", border: "1px solid #F4C430" }}
                   >
-                    {busyFor === l.id ? "لحظات…" : locked ? "🔓 إعادة فتح الدوري" : "🔒 قفل الدوري (أرشفة)"}
+                    {busyFor === l.id
+                      ? "لحظات…"
+                      : locked
+                        ? "🔓 إعادة فتح الدوري"
+                        : draft
+                          ? "▶️ بدء الدوري"
+                          : "🔒 قفل الدوري (أرشفة)"}
                   </button>
                 </div>
                 <ResetLeagueDanger league={{ id: l.id, name: l.name }} />
@@ -244,8 +255,11 @@ export default function AdminLeaguesPage() {
         </div>
 
         <p className="mt-4 text-[12.5px]" style={{ color: "var(--text-2)" }}>
-          الدوري المقفول: يظهر للجمهور بنتائجه كاملة، لكن الكونسول يرفض أي تسجيل
-          جديد (إلا للأدمن للتصحيح) ولا يقبل الفريق لاعبين جددًا.
+          الدوري المقفول (منتهٍ): يظهر للجمهور بنتائجه كاملة، لكن الكونسول يرفض أي
+          تسجيل جديد (إلا للأدمن للتصحيح) ولا يقبل الفريق لاعبين جددًا.
+          <br />
+          «لم يبدأ (مسودة)»: جدوله وفرقه جاهزة ويظهر في المبدّل موسومًا، و«بدء
+          الدوري» يحوّله إلى مفتوح.
         </p>
       </div>
     </div>

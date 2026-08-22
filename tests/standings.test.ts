@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeStandings, deriveScore } from "../lib/standings/compute";
+import { computeStandings, deriveScore, resolveMatchSides } from "../lib/standings/compute";
 import type {
   LeagueRules,
   Match,
@@ -144,5 +144,38 @@ describe("computeStandings", () => {
     const rows = computeStandings({ teams: twoTeams, matches, events, adjustments: [], rules });
     expect(rows[0].teamCode).toBe("A1");
     expect(rows[1].fairPlayPenalty).toBe(1);
+  });
+});
+
+describe("resolveMatchSides — أطراف الإقصائيات قبل اشتقاق النتيجة", () => {
+  const semi: Match = {
+    ...match("m21", "1A", "2B"),
+    stage: "semi_1",
+    matchDay: "2026-09-11",
+  };
+  const events = [goal("m21", "A1"), goal("m21", "A1"), goal("m21", "B2")];
+  const resolve = (raw: string) =>
+    ({ "1A": "A1", "2B": "B2" } as Record<string, string>)[raw];
+
+  it("بلا حلّ الرموز تخرج النتيجة 0-0 (الأحداث بأكواد الفرق لا بالرموز)", () => {
+    expect(deriveScore(semi, events)).toEqual({ home: 0, away: 0 });
+  });
+
+  it("بعد الحل تُشتق النتيجة الصحيحة", () => {
+    expect(deriveScore(resolveMatchSides(semi, resolve), events)).toEqual({
+      home: 2,
+      away: 1,
+    });
+  });
+
+  it("رمز لم يُحسم بعد يبقى كما هو بلا انهيار", () => {
+    const pending = resolveMatchSides(semi, () => undefined);
+    expect(pending.home).toBe("1A");
+    expect(deriveScore(pending, events)).toEqual({ home: 0, away: 0 });
+  });
+
+  it("مباريات المجموعات تمر كما هي (نفس المرجع)", () => {
+    const g = match("m1", "A1", "A2");
+    expect(resolveMatchSides(g, () => "X9")).toBe(g);
   });
 });

@@ -329,7 +329,9 @@ export default function HomePage() {
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[14.5px] font-bold text-white">{l.name}</span>
                     <span className="block text-[12px]" style={{ color: "var(--text-3)" }}>
-                      {l.season ?? ""}{l.status === "archived" ? " · مؤرشف" : ""}
+                      {l.season ?? ""}
+                      {l.status === "archived" ? " · منتهٍ (مؤرشف)" : ""}
+                      {l.status === "draft" ? " · لم يبدأ بعد" : ""}
                     </span>
                   </span>
                   {active ? (

@@ -17,7 +17,7 @@ import {
   type ReactNode,
 } from "react";
 import { loadSeed, slotToMinutes, type LeagueSeed } from "./seed";
-import { computeStandings, deriveScore } from "../standings/compute";
+import { computeStandings, deriveScore, resolveMatchSides } from "../standings/compute";
 import {
   checkScheduleConflicts,
   conflictsFor,
@@ -584,8 +584,10 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     (matchId: string): DerivedScore => {
       const match = matchById.get(matchId);
       if (!match) return { home: 0, away: 0 };
-      return deriveScore(match, state.events);
+      return deriveScore(resolvedSides(match), state.events);
     },
+    // resolvedSides معرفة أدناه (تعتمد على resolveSideRaw) — نفس نمط knockoutWinner
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [matchById, state.events],
   );
 
@@ -642,11 +644,15 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     (stage: "semi_1" | "semi_2" | "third_place" | "final"): { w?: string; l?: string } => {
       const m = matches.find((x) => x.stage === stage);
       if (!m || (state.statuses[m.id] ?? "scheduled") !== "approved") return {};
-      const s = deriveScore(m, state.events);
       const rep = state.reports[m.id];
       const resolved = resolveSideRaw(m.home);
       const resolvedAway = resolveSideRaw(m.away);
       if (!resolved.team || !resolvedAway.team) return {};
+      // الاشتقاق بعد حلّ الرموز — الأحداث لا تعرف «1A» بل كود الفريق
+      const s = deriveScore(
+        { ...m, home: resolved.team.code, away: resolvedAway.team.code },
+        state.events,
+      );
       let homeWins = s.home > s.away;
       if (s.home === s.away) {
         const hp = rep?.homePens ?? 0;
@@ -667,15 +673,14 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     (raw: string): { team?: Team; label: string } => {
       const direct = seed.teams.find((t) => t.code === raw);
       if (direct) return { team: direct, label: direct.name };
-      const placeholderLabels: Record<string, string> = {
-        "1A": "أول المجموعة A",
-        "2A": "ثاني المجموعة A",
-        "1B": "أول المجموعة B",
-        "2B": "ثاني المجموعة B",
-        W_semi_1: "فائز نصف النهائي 1",
-        W_semi_2: "فائز نصف النهائي 2",
-        L_semi_1: "خاسر نصف النهائي 1",
-        L_semi_2: "خاسر نصف النهائي 2",
+      // وصف الرمز قبل حسمه — مولَّد لا مكتوبًا، فيصح مع أي عدد مجموعات (A-D)
+      const RANK_WORDS = ["", "أول", "ثاني", "ثالث", "رابع"];
+      const describe = (code: string): string | undefined => {
+        const g = /^([1-9])([A-D])$/.exec(code);
+        if (g) return `${RANK_WORDS[Number(g[1])] ?? g[1]} المجموعة ${g[2]}`;
+        const d = /^([WL])_semi_([0-9]+)$/.exec(code);
+        if (d) return `${d[1] === "W" ? "فائز" : "خاسر"} نصف النهائي ${d[2]}`;
+        return undefined;
       };
       if (/^[1-9][A-D]$/.test(raw) && groupsComplete) {
         const rank = Number(raw[0]);
@@ -691,9 +696,15 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
         const team = code ? teamByCode(code) : undefined;
         if (team) return { team, label: team.name };
       }
-      return { label: placeholderLabels[raw] ?? raw };
+      return { label: describe(raw) ?? raw };
     },
     [seed, groupsComplete, standingsOf, teamByCode, knockoutWinner],
+  );
+
+  /** المباراة بأطراف محلولة (مباريات المجموعات تعود كما هي) */
+  const resolvedSides = useCallback(
+    (m: Match): Match => resolveMatchSides(m, (raw) => resolveSideRaw(raw).team?.code),
+    [resolveSideRaw],
   );
 
   const onFieldPlayers = useCallback(
@@ -1543,7 +1554,9 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
         clocks: { ...l.clocks, [matchId]: clock },
       }));
       const match = seedRef.current.matches.find((m) => m.id === matchId);
-      const score = match ? deriveScore(match, liveRef.current.events) : { home: 0, away: 0 };
+      const score = match
+        ? deriveScore(resolvedSides(match), liveRef.current.events)
+        : { home: 0, away: 0 };
       writeMatch(matchId, {
         status: "finished",
         clock,
@@ -1599,7 +1612,9 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
         },
       }));
       const match = seedRef.current.matches.find((m) => m.id === matchId);
-      const score = match ? deriveScore(match, liveRef.current.events) : { home: 0, away: 0 };
+      const score = match
+        ? deriveScore(resolvedSides(match), liveRef.current.events)
+        : { home: 0, away: 0 };
       const ids = idsRef.current;
       if (ids) {
         writeMatch(matchId, { status: "approved", home_score: score.home, away_score: score.away });

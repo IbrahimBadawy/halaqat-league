@@ -135,10 +135,18 @@ export function slotToMinutes(slot: string): number {
   return h >= 20 ? h * 60 + mm - 23 * 60 : h * 60 + mm + 60;
 }
 
-/** تنسيق عرض ليلة المباريات: "الجمعة 21/8" */
+const WEEKDAY_NAMES = [
+  "الأحد", "الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت",
+];
+
+/**
+ * تنسيق عرض ليلة المباريات: "الجمعة 21/8". اسم اليوم محسوب من التاريخ نفسه —
+ * ليالي هذا الدوري جُمَع، لكن أي دوري آخر على المنصة قد يلعب في يوم مختلف.
+ */
 export function formatNight(matchDay: string): string {
-  const [, m, d] = matchDay.split("-").map(Number);
-  return `الجمعة ${d}/${m}`;
+  const [y, m, d] = matchDay.split("-").map(Number);
+  const day = WEEKDAY_NAMES[new Date(Date.UTC(y, m - 1, d)).getUTCDay()] ?? "";
+  return `${day} ${d}/${m}`;
 }
 
 /** تنسيق الفترة للعرض: "11:00 PM" / "12:20 AM" */

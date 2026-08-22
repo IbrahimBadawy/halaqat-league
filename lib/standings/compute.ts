@@ -14,6 +14,22 @@ import type {
 } from "../league/types";
 
 /** مجموع قيم أهداف كل فريق في مباراة من أحداثها (يتجاهل المحذوف) */
+/**
+ * نسخة من المباراة بأطراف محلولة لأكواد فرق حقيقية. أحداث المباراة تحمل كود
+ * الفريق دائمًا، بينما أطراف الإقصائيات رموز (1A / W_semi_1) — فبدون الحل
+ * تخرج كل نتائج الإقصاء 0-0، ومعها لا يُحسم فائز فلا يتحدد النهائي ولا الثالث.
+ * `resolve` يرجع كود الفريق للرمز إن أمكن حسمه، وإلا undefined.
+ */
+export function resolveMatchSides(
+  match: Match,
+  resolve: (raw: string) => string | undefined,
+): Match {
+  if (match.stage === "group") return match;
+  const home = resolve(match.home) ?? match.home;
+  const away = resolve(match.away) ?? match.away;
+  return home === match.home && away === match.away ? match : { ...match, home, away };
+}
+
 export function deriveScore(match: Match, events: MatchEvent[]): DerivedScore {
   let home = 0;
   let away = 0;
