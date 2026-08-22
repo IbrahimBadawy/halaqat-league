@@ -1,10 +1,14 @@
-// غلاف خادمي للتصدير الثابت — يعدّد أكواد الفرق A1..B5 من الـ seed المدمج.
+// غلاف خادمي للتصدير الثابت — أكواد الفرق تتبع نمط المعالج: مجموعات A..D
+// وحتى 10 فرق لكل مجموعة، فنولّد A1..D10 (الكود غير الموجود يعرض
+// «الفريق غير موجود» من مكوّن العميل).
 
-import { loadSeed } from "@/lib/league/seed";
 import TeamClient from "./TeamClient";
 
 export function generateStaticParams() {
-  return loadSeed().teams.map((t) => ({ code: t.code }));
+  const letters = ["A", "B", "C", "D"];
+  return letters.flatMap((l) =>
+    Array.from({ length: 10 }, (_, i) => ({ code: `${l}${i + 1}` })),
+  );
 }
 
 export const dynamicParams = false;

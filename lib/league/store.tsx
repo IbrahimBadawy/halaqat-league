@@ -28,15 +28,22 @@ import {
 import { computeTeamSuspensions } from "../discipline/suspensions";
 import { supabase, usernameToEmail } from "../supabase/client";
 import {
+  accountsCall,
   deviceKey,
   emptyLive,
+  fetchLeagues,
   fetchRemote,
+  liveCall,
   liveWrite,
   queueWrite,
   type CardUsageLite,
+  type JoinRequestInfo,
+  type LeagueInfo,
+  type ProfileInfo,
   type RemoteIds,
   type RemoteLive,
 } from "./remote";
+import type { GeneratedFixture } from "../scheduling/generate";
 import { droppedWrites, pendingWrites, startQueue, subscribeQueue } from "./queue";
 import type { ActivePowerCard, ClockState } from "./live-types";
 import type {
@@ -89,7 +96,34 @@ export interface SessionUser {
   /** أدوار الدوري الخام: admin / moderator / referee / recorder */
   roles: string[];
   isPlatformAdmin: boolean;
+  /** أُنشئ الحساب (أو أُعيد تعيينه) من الأدمن — يجب تغيير كلمة المرور */
+  mustChangePassword: boolean;
+  accountType: string;
 }
+
+/** حمولة معالج إنشاء دوري جديد — تُرسل كما هي لبوابة live-write */
+export interface NewLeaguePayload {
+  name: string;
+  season: string;
+  slogan: string;
+  groups: { name: string; teams: string[] }[];
+  match_days: string[];
+  slots: string[];
+  venues: string[];
+  rules: {
+    half_minutes: number;
+    slot_minutes: number;
+    qualify_per_group: number;
+    yellow_cards_for_suspension: number;
+    red_card_suspension_matches: number;
+    final_duration_override_minutes: number;
+  };
+  knockout: boolean;
+  power_cards: boolean;
+  fixtures: GeneratedFixture[];
+}
+
+const ACTIVE_LEAGUE_KEY = "halaqat-active-league";
 
 const LEGACY_KEY = "halaqat-league-v1";
 const LEGACY_LOCAL_KEY = "halaqat-league-local-v1";
@@ -171,6 +205,48 @@ export interface LeagueStore {
   canApprove: boolean;
   signIn: (username: string, password: string) => Promise<string | null>;
   signOut: () => Promise<void>;
+  /** تسجيل ذاتي (زائر/لاعب) ثم دخول تلقائي — يُرجع نص الخطأ أو null */
+  register: (
+    username: string,
+    password: string,
+    display: string,
+    type: "fan" | "player",
+  ) => Promise<string | null>;
+  /** تغيير كلمة مرور الحساب الحالي — يُرجع نص الخطأ أو null */
+  changePassword: (newPassword: string) => Promise<string | null>;
+
+  // الدوريات (المنصة متعددة الدوريات — المبدّل في الواجهة)
+  leagues: LeagueInfo[];
+  activeLeagueId: string | null;
+  setActiveLeague: (leagueId: string) => void;
+  /** إعادة الجلب اليدوية بعد فعل تفاعلي */
+  refresh: () => Promise<void>;
+
+  // الانضمام للفرق
+  /** فريق المستخدم الحالي في الدوري النشط (لو لاعبًا مرتبطًا) */
+  myTeamCode: string | undefined;
+  /** الفرق التي المستخدم كابتنها في الدوري النشط */
+  captainOf: string[];
+  joinRequests: JoinRequestInfo[];
+  /** teamCode -> كود الانضمام (يراه الكابتن والأدمن فقط) */
+  joinCodes: Record<string, string>;
+  /** teamCode -> userId كابتن الفريق (null = بلا كابتن) */
+  captains: Record<string, string | null>;
+  requestJoin: (code: string) => Promise<string | null>;
+  decideJoin: (requestId: string, approve: boolean) => Promise<string | null>;
+
+  // إدارة الأدمن
+  profilesAll: ProfileInfo[];
+  memberRoles: Record<string, string[]>;
+  setCaptain: (teamCode: string, userId: string | null) => Promise<string | null>;
+  adminCreateAccount: (
+    username: string,
+    password: string,
+    display: string,
+    roles: string[],
+  ) => Promise<string | null>;
+  adminResetPassword: (userId: string, newPassword: string) => Promise<string | null>;
+  adminCreateLeague: (payload: NewLeaguePayload) => Promise<{ error?: string; leagueId?: string }>;
 
   // أفعال
   rescheduleMatch: (matchId: string, patch: FixtureOverride, reason: string) => void;
@@ -208,6 +284,8 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
   const [seed, setSeed] = useState<LeagueSeed>(bundledSeed);
   const [live, setLive] = useState<RemoteLive>(emptyLive);
   const [user, setUser] = useState<SessionUser | null>(null);
+  const [leagues, setLeagues] = useState<LeagueInfo[]>([]);
+  const [activeLeagueId, setActiveLeagueId] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const [connected, setConnected] = useState(false);
   const [pending, setPending] = useState(0);
@@ -220,6 +298,8 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
   const userRef = useRef(user);
   userRef.current = user;
   const idsRef = useRef<RemoteIds | null>(null);
+  const activeRef = useRef<string | null>(null);
+  activeRef.current = activeLeagueId;
 
   const applySnapshot = useCallback(
     (s: { seed: LeagueSeed; live: RemoteLive; ids: RemoteIds }) => {
@@ -243,7 +323,8 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // الجلب الأول من القاعدة (الزائر يرى كل شيء بلا حساب)
+  // الجلب الأول: قائمة الدوريات ← الدوري النشط (المحفوظ أو الأول) ← بياناته.
+  // الزائر يرى كل شيء بلا حساب.
   useEffect(() => {
     try {
       // مبدّل الدور المحلي القديم لم يعد له معنى بعد الحسابات الحقيقية
@@ -256,7 +337,20 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     (async () => {
       try {
-        const snapshot = await fetchRemote();
+        const list = await fetchLeagues();
+        if (cancelled) return;
+        setLeagues(list);
+        let stored: string | null = null;
+        try {
+          stored = localStorage.getItem(ACTIVE_LEAGUE_KEY);
+        } catch {
+          // لا شيء
+        }
+        const active =
+          list.find((l) => l.id === stored)?.id ?? list[0]?.id ?? null;
+        setActiveLeagueId(active);
+        activeRef.current = active;
+        const snapshot = await fetchRemote(active ?? undefined);
         if (cancelled) return;
         applySnapshot(snapshot);
         setConnected(true);
@@ -282,17 +376,23 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
         return;
       }
       const [profileQ, memberQ] = await Promise.all([
-        supabase.from("profiles").select("username, display_name, is_platform_admin").eq("id", uid).maybeSingle(),
+        supabase.from("profiles")
+          .select("username, display_name, is_platform_admin, must_change_password, account_type")
+          .eq("id", uid).maybeSingle(),
         supabase.from("league_members").select("roles").eq("user_id", uid).eq("status", "active"),
       ]);
       if (cancelled) return;
       const p = profileQ.data;
+      const roles = (memberQ.data ?? []).flatMap((r) => r.roles as string[]);
+      if (p?.is_platform_admin && !roles.includes("admin")) roles.push("admin");
       setUser({
         id: uid,
         username: p?.username ?? "",
         displayName: p?.display_name ?? p?.username ?? "",
-        roles: (memberQ.data ?? []).flatMap((r) => r.roles as string[]),
+        roles,
         isPlatformAdmin: p?.is_platform_admin ?? false,
+        mustChangePassword: p?.must_change_password ?? false,
+        accountType: p?.account_type ?? "fan",
       });
     };
 
@@ -320,7 +420,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
           return;
         }
         try {
-          applySnapshot(await fetchRemote());
+          applySnapshot(await fetchRemote(activeRef.current ?? undefined));
         } catch {
           // سيُعاد المزامنة مع التغيير التالي
         }
@@ -335,6 +435,11 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
       "standing_adjustments",
       "card_usages",
       "audit_log",
+      "posts",
+      "predictions",
+      "join_requests",
+      "teams",
+      "players",
     ]) {
       channel.on("postgres_changes", { event: "*", schema: "public", table }, refetch);
     }
@@ -770,6 +875,149 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     await supabase.auth.signOut();
     setUser(null);
   }, []);
+
+  /** إعادة جلب لقطة الدوري النشط (بعد فعل تفاعلي يغيّر بيانات لا يبثها Realtime فورًا) */
+  const refresh = useCallback(async () => {
+    try {
+      applySnapshot(await fetchRemote(activeRef.current ?? undefined));
+      setLeagues(await fetchLeagues());
+    } catch {
+      // سيتكفل Realtime أو المحاولة التالية
+    }
+  }, [applySnapshot]);
+
+  const setActiveLeague = useCallback(
+    (leagueId: string) => {
+      if (leagueId === activeRef.current) return;
+      setActiveLeagueId(leagueId);
+      activeRef.current = leagueId;
+      try {
+        localStorage.setItem(ACTIVE_LEAGUE_KEY, leagueId);
+      } catch {
+        // لا شيء
+      }
+      setLive(emptyLive());
+      void (async () => {
+        try {
+          applySnapshot(await fetchRemote(leagueId));
+        } catch (e) {
+          console.error("تعذر تحميل الدوري المختار", e);
+        }
+      })();
+    },
+    [applySnapshot],
+  );
+
+  const register = useCallback(
+    async (
+      username: string,
+      password: string,
+      display: string,
+      type: "fan" | "player",
+    ): Promise<string | null> => {
+      const res = await accountsCall("register", {
+        username,
+        password,
+        display_name: display,
+        account_type: type,
+      });
+      if (!res.ok) return res.error ?? "تعذّر التسجيل";
+      return signIn(username, password);
+    },
+    [signIn],
+  );
+
+  const changePassword = useCallback(async (newPassword: string): Promise<string | null> => {
+    if (newPassword.length < 8) return "كلمة المرور 8 أحرف على الأقل";
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) {
+      return error.message.toLowerCase().includes("different")
+        ? "اختر كلمة مختلفة عن الحالية"
+        : `تعذّر التغيير: ${error.message}`;
+    }
+    const uid = userRef.current?.id;
+    if (uid) {
+      await supabase.from("profiles").update({ must_change_password: false }).eq("id", uid);
+      setUser((u) => (u ? { ...u, mustChangePassword: false } : u));
+    }
+    return null;
+  }, []);
+
+  const requestJoin = useCallback(
+    async (code: string): Promise<string | null> => {
+      const res = await liveCall("request_join", { code });
+      if (!res.ok) return res.error ?? "تعذّر إرسال الطلب";
+      await refresh();
+      return null;
+    },
+    [refresh],
+  );
+
+  const decideJoin = useCallback(
+    async (requestId: string, approve: boolean): Promise<string | null> => {
+      const res = await liveCall("decide_join", { request_id: requestId, approve });
+      if (!res.ok) return res.error ?? "تعذّر الحسم";
+      await refresh();
+      return null;
+    },
+    [refresh],
+  );
+
+  const setCaptain = useCallback(
+    async (teamCode: string, userId: string | null): Promise<string | null> => {
+      const teamId = idsRef.current?.teamByCode[teamCode];
+      if (!teamId) return "الفريق غير معروف";
+      const res = await liveCall("set_captain", { team_id: teamId, user_id: userId });
+      if (!res.ok) return res.error ?? "تعذّر التعيين";
+      await refresh();
+      return null;
+    },
+    [refresh],
+  );
+
+  const adminCreateAccount = useCallback(
+    async (
+      username: string,
+      password: string,
+      display: string,
+      roles: string[],
+    ): Promise<string | null> => {
+      const res = await accountsCall("create_account", {
+        username,
+        password,
+        display_name: display,
+        roles,
+        league_id: idsRef.current?.leagueId,
+      });
+      if (!res.ok) return res.error ?? "تعذّر الإنشاء";
+      await refresh();
+      return null;
+    },
+    [refresh],
+  );
+
+  const adminResetPassword = useCallback(
+    async (userId: string, newPassword: string): Promise<string | null> => {
+      const res = await accountsCall("reset_password", {
+        user_id: userId,
+        new_password: newPassword,
+      });
+      if (!res.ok) return res.error ?? "تعذّرت إعادة التعيين";
+      return null;
+    },
+    [],
+  );
+
+  const adminCreateLeague = useCallback(
+    async (payload: NewLeaguePayload): Promise<{ error?: string; leagueId?: string }> => {
+      const res = await liveCall("create_league", { league: payload });
+      if (!res.ok) return { error: res.error ?? "تعذّر الإنشاء" };
+      const leagueId = String(res.data?.league_id ?? "");
+      setLeagues(await fetchLeagues().catch(() => leagues));
+      return { leagueId };
+    },
+    [leagues],
+  );
 
   const rescheduleMatch = useCallback(
     (matchId: string, patch: FixtureOverride, reason: string) => {
@@ -1237,6 +1485,13 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     void signOut();
   }, [signOut]);
 
+  const myTeamCode = user ? live.playerTeams[user.id] : undefined;
+  const captainOf = user
+    ? Object.entries(live.captains)
+        .filter(([, uid]) => uid === user.id)
+        .map(([code]) => code)
+    : [];
+
   const store: LeagueStore = {
     seed,
     state,
@@ -1246,6 +1501,25 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     connected,
     pendingWrites: pending,
     droppedWrites: dropped,
+    leagues,
+    activeLeagueId,
+    setActiveLeague,
+    refresh,
+    myTeamCode,
+    captainOf,
+    joinRequests: live.joinRequests,
+    joinCodes: live.joinCodes,
+    captains: live.captains,
+    requestJoin,
+    decideJoin,
+    profilesAll: live.profiles,
+    memberRoles: live.members,
+    setCaptain,
+    adminCreateAccount,
+    adminResetPassword,
+    adminCreateLeague,
+    register,
+    changePassword,
     scheduleConflicts,
     conflictsOf,
     suggestReschedule,

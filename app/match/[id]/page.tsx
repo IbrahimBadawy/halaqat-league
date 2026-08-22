@@ -1,11 +1,11 @@
-// غلاف خادمي للتصدير الثابت — يعدّد أكواد المباريات من الـ seed المدمج
-// (m1..m24 ثابتة في المرحلة 0)، والمحتوى كله في مكوّن العميل.
+// غلاف خادمي للتصدير الثابت — المنصة متعددة الدوريات، فنولّد صفحات لنطاق
+// سخي من أكواد المباريات (m1..m64، حد create_league نفسه). الكود غير
+// الموجود في الدوري النشط يعرض «المباراة غير موجودة» من مكوّن العميل.
 
-import { loadSeed } from "@/lib/league/seed";
 import MatchClient from "./MatchClient";
 
 export function generateStaticParams() {
-  return loadSeed().matches.map((m) => ({ id: m.id }));
+  return Array.from({ length: 64 }, (_, i) => ({ id: `m${i + 1}` }));
 }
 
 export const dynamicParams = false;

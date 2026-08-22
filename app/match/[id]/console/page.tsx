@@ -1,10 +1,9 @@
-// غلاف خادمي للتصدير الثابت — نفس أكواد المباريات، والكونسول كله عميل.
+// غلاف خادمي للتصدير الثابت — نفس نطاق أكواد المباريات (m1..m64).
 
-import { loadSeed } from "@/lib/league/seed";
 import ConsoleClient from "./ConsoleClient";
 
 export function generateStaticParams() {
-  return loadSeed().matches.map((m) => ({ id: m.id }));
+  return Array.from({ length: 64 }, (_, i) => ({ id: `m${i + 1}` }));
 }
 
 export const dynamicParams = false;

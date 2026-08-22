@@ -16,19 +16,30 @@ const admin = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
 
-/** أدوار الدوري لحامل هذا التوكن (فارغة = زائر أو توكن غير صالح) */
-async function rolesOf(authHeader: string | null): Promise<string[]> {
+/** هوية حامل التوكن وأدواره (مدير المنصة يُحتسب admin تلقائيًا) */
+async function authInfo(
+  authHeader: string | null,
+): Promise<{ uid: string | null; roles: string[] }> {
   const token = authHeader?.replace(/^Bearer\s+/i, "");
-  if (!token) return [];
+  if (!token) return { uid: null, roles: [] };
   const { data, error } = await admin.auth.getUser(token);
-  if (error || !data.user) return [];
-  const { data: rows } = await admin
-    .from("league_members")
-    .select("roles")
-    .eq("user_id", data.user.id)
-    .eq("status", "active");
-  return (rows ?? []).flatMap((r) => r.roles as string[]);
+  if (error || !data.user) return { uid: null, roles: [] };
+  const [profileQ, memberQ] = await Promise.all([
+    admin.from("profiles").select("is_platform_admin").eq("id", data.user.id).maybeSingle(),
+    admin.from("league_members").select("roles").eq("user_id", data.user.id).eq("status", "active"),
+  ]);
+  const roles = (memberQ.data ?? []).flatMap((r) => r.roles as string[]);
+  if (profileQ.data?.is_platform_admin && !roles.includes("admin")) roles.push("admin");
+  return { uid: data.user.id, roles };
 }
+
+/** كروت القوة الافتراضية للدوريات الجديدة */
+const DEFAULT_POWER_CARDS = [
+  { name: "الهدف بهدفين", icon: "⚡", description: "الهدف التالي لفريقك يُحتسب بهدفين", rarity: "rare", effect_type: "goal_multiplier", params: { multiplier: 2, scope: "next_goal" }, usage_window: "live" },
+  { name: "وقت إضافي", icon: "⏱️", description: "إضافة 3 دقائق لزمن المباراة", rarity: "common", effect_type: "extra_time", params: { minutes: 3 }, usage_window: "live" },
+  { name: "الدرع", icon: "🛡️", description: "إلغاء إنذار واحد للاعب من فريقك", rarity: "common", effect_type: "shield", params: { cancels: "yellow_card" }, usage_window: "live" },
+  { name: "تبديل إضافي", icon: "🔁", description: "تبديل إضافي فوق الحد المسموح", rarity: "common", effect_type: "extra_substitution", params: { count: 1 }, usage_window: "live" },
+];
 
 const CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -104,29 +115,32 @@ Deno.serve(async (req: Request) => {
   }
 
   const action = String(body.action);
-  // أفعال الجمهور تعمل بلا حساب. تسجيل الأحداث والتشكيلات للطاقم المُسنَد،
-  // والاعتماد وإعادة الفتح وتعديل النقاط وتغيير المواعيد للأدمن/الحكم فقط.
+  // أفعال الجمهور تعمل بلا حساب، وأفعال المستخدم (طلب/قرار الانضمام) تحتاج
+  // دخولًا فقط وتُدقَّق داخل حالتها. تسجيل الأحداث للطاقم، والاعتماد للحكم/
+  // الأدمن، وتعديل النقاط والكباتن وإنشاء الدوريات للأدمن فقط.
   const PUBLIC_ACTIONS = ["insert_post", "like_post", "upsert_prediction"];
-  const ADMIN_ACTIONS = ["insert_adjustment"];
+  const USER_ACTIONS = ["request_join", "decide_join"];
+  const ADMIN_ACTIONS = ["insert_adjustment", "set_captain", "create_league"];
   const STAFF_ROLES = ["admin", "referee", "recorder"];
 
+  let auth: { uid: string | null; roles: string[] } = { uid: null, roles: [] };
   if (!PUBLIC_ACTIONS.includes(action)) {
-    const roles = await rolesOf(req.headers.get("Authorization"));
-    const needed = ADMIN_ACTIONS.includes(action)
-      ? ["admin"]
-      : action === "approve_match"
-        ? ["admin", "referee"]
-        : STAFF_ROLES;
-    if (!roles.some((r) => needed.includes(r))) {
-      return json({ error: "forbidden", needed }, 403);
-    }
-    // الاعتماد النهائي حكر على الحكم أو الأدمن (لا المسجّل)
-    if (
-      action === "update_match" &&
-      (body.payload as { patch?: Record<string, unknown> })?.patch?.status === "approved" &&
-      !roles.some((r) => r === "admin" || r === "referee")
-    ) {
-      return json({ error: "approval_needs_referee" }, 403);
+    auth = await authInfo(req.headers.get("Authorization"));
+    if (USER_ACTIONS.includes(action)) {
+      if (!auth.uid) return json({ error: "سجّل دخولك أولًا" }, 401);
+    } else {
+      const needed = ADMIN_ACTIONS.includes(action) ? ["admin"] : STAFF_ROLES;
+      if (!auth.roles.some((r) => needed.includes(r))) {
+        return json({ error: "forbidden", needed }, 403);
+      }
+      // الاعتماد النهائي حكر على الحكم أو الأدمن (لا المسجّل)
+      if (
+        action === "update_match" &&
+        (body.payload as { patch?: Record<string, unknown> })?.patch?.status === "approved" &&
+        !auth.roles.some((r) => r === "admin" || r === "referee")
+      ) {
+        return json({ error: "approval_needs_referee" }, 403);
+      }
     }
   }
 
@@ -271,6 +285,263 @@ Deno.serve(async (req: Request) => {
           .upsert(row, { onConflict: "match_id,device_key" });
         if (error) throw error;
         return json({ ok: true });
+      }
+      case "request_join": {
+        const code = String(p.code ?? "").trim().toUpperCase();
+        if (!/^[A-Z0-9]{4,10}$/.test(code)) return json({ error: "كود غير صالح" }, 400);
+        const { data: jc } = await admin
+          .from("team_join_codes").select("team_id").eq("code", code).maybeSingle();
+        if (!jc) return json({ error: "لا يوجد فريق بهذا الكود" }, 404);
+        const { data: team } = await admin
+          .from("teams").select("id, league_id, name").eq("id", jc.team_id).single();
+        if (!team) return json({ error: "الفريق غير موجود" }, 404);
+        // عضو بالفعل في فريق بنفس الدوري؟
+        const { data: existing } = await admin
+          .from("players")
+          .select("id, teams!inner(league_id)")
+          .eq("user_id", auth.uid!)
+          .eq("teams.league_id", team.league_id);
+        if ((existing ?? []).length > 0) {
+          return json({ error: "أنت بالفعل لاعب في فريق بهذا الدوري" }, 409);
+        }
+        const ins = await admin
+          .from("join_requests").insert({ team_id: team.id, user_id: auth.uid! });
+        if (ins.error) {
+          if (ins.error.code === "23505") {
+            return json({ error: "لديك طلب معلق بالفعل — انتظر قرار الكابتن" }, 409);
+          }
+          throw ins.error;
+        }
+        await admin.from("profiles")
+          .update({ account_type: "player" })
+          .eq("id", auth.uid!).eq("account_type", "fan");
+        return json({ ok: true, team_name: team.name });
+      }
+      case "decide_join": {
+        if (!UUID_RE.test(String(p.request_id))) return json({ error: "bad_id" }, 400);
+        const { data: reqRow } = await admin
+          .from("join_requests")
+          .select("id, status, team_id, user_id")
+          .eq("id", p.request_id).maybeSingle();
+        if (!reqRow) return json({ error: "الطلب غير موجود" }, 404);
+        if (reqRow.status !== "pending") return json({ error: "الطلب محسوم بالفعل" }, 409);
+        const { data: team } = await admin
+          .from("teams")
+          .select("id, short_code, captain_id, league_id")
+          .eq("id", reqRow.team_id).single();
+        if (!team) return json({ error: "الفريق غير موجود" }, 404);
+        const allowed = team.captain_id === auth.uid || auth.roles.includes("admin");
+        if (!allowed) return json({ error: "قرار الانضمام لكابتن الفريق أو الأدمن" }, 403);
+        const approve = p.approve === true;
+        if (approve) {
+          const { data: profile } = await admin
+            .from("profiles").select("display_name, username").eq("id", reqRow.user_id).single();
+          const { data: maxRow } = await admin
+            .from("players").select("shirt_number").eq("team_id", team.id)
+            .order("shirt_number", { ascending: false }).limit(1).maybeSingle();
+          const shirt = (maxRow?.shirt_number ?? 0) + 1;
+          const ins = await admin.from("players").insert({
+            team_id: team.id,
+            user_id: reqRow.user_id,
+            code: `${team.short_code}-${shirt}`,
+            shirt_number: shirt,
+            name: profile?.display_name ?? profile?.username ?? "لاعب",
+            position: "لاعب",
+          });
+          if (ins.error) throw ins.error;
+        }
+        const upd = await admin.from("join_requests").update({
+          status: approve ? "approved" : "rejected",
+          decided_by: auth.uid,
+          decided_at: new Date().toISOString(),
+        }).eq("id", reqRow.id);
+        if (upd.error) throw upd.error;
+        return json({ ok: true });
+      }
+      case "set_captain": {
+        if (!UUID_RE.test(String(p.team_id))) return json({ error: "bad_id" }, 400);
+        const captain = p.user_id === null ? null : String(p.user_id);
+        if (captain !== null && !UUID_RE.test(captain)) return json({ error: "bad_id" }, 400);
+        const { error } = await admin
+          .from("teams").update({ captain_id: captain }).eq("id", p.team_id);
+        if (error) throw error;
+        return json({ ok: true });
+      }
+      case "create_league": {
+        // إنشاء دوري كامل من معالج الأدمن — كل الكيانات في طلب واحد
+        // deno-lint-ignore no-explicit-any
+        const L: any = p.league ?? {};
+        const name = String(L.name ?? "").trim().slice(0, 80);
+        const season = String(L.season ?? "").trim().slice(0, 40);
+        const slogan = String(L.slogan ?? "").trim().slice(0, 120);
+        const groups: { name: string; teams: string[] }[] =
+          Array.isArray(L.groups) ? L.groups : [];
+        const matchDays: string[] = Array.isArray(L.match_days) ? L.match_days : [];
+        const slots: string[] = Array.isArray(L.slots) ? L.slots : [];
+        const venueNames: string[] = Array.isArray(L.venues) ? L.venues : [];
+        // deno-lint-ignore no-explicit-any
+        const fixtures: any[] = Array.isArray(L.fixtures) ? L.fixtures : [];
+        const teamCount = groups.reduce(
+          (s, g) => s + (Array.isArray(g.teams) ? g.teams.length : 0), 0);
+
+        if (!name) return json({ error: "اسم الدوري مطلوب" }, 400);
+        if (groups.length < 1 || groups.length > 4)
+          return json({ error: "المجموعات من 1 إلى 4" }, 400);
+        if (teamCount < 2 || teamCount > 40)
+          return json({ error: "الفرق من 2 إلى 40" }, 400);
+        if (matchDays.length < 1 || matchDays.length > 12)
+          return json({ error: "الأيام من 1 إلى 12" }, 400);
+        if (slots.length < 1 || slots.length > 12)
+          return json({ error: "الفترات من 1 إلى 12" }, 400);
+        if (venueNames.length < 1 || venueNames.length > 6)
+          return json({ error: "الملاعب من 1 إلى 6" }, 400);
+        if (fixtures.length < 1 || fixtures.length > 64)
+          return json({ error: "عدد المباريات من 1 إلى 64" }, 400);
+
+        const rules = {
+          points: { win: 3, draw: 1, loss: 0 },
+          halves: 2,
+          half_minutes: Number(L.rules?.half_minutes) || 8,
+          slot_minutes: Number(L.rules?.slot_minutes) || 20,
+          final_duration_override_minutes: Number(L.rules?.final_duration_override_minutes) || 30,
+          substitutions: "unlimited",
+          tiebreakers: ["points", "head_to_head", "goal_difference", "goals_for", "fair_play", "draw"],
+          yellow_cards_for_suspension: Number(L.rules?.yellow_cards_for_suspension) || 2,
+          red_card_suspension_matches: Number(L.rules?.red_card_suspension_matches) || 1,
+        };
+        const qualify = Number(L.rules?.qualify_per_group) || 2;
+
+        const leagueIns = await admin.from("leagues").insert({
+          slug: `league-${Date.now().toString(36)}`,
+          name, slogan, season,
+          status: "active",
+          starts_at: matchDays[0],
+          ends_at: matchDays[matchDays.length - 1],
+          settings: {
+            rules,
+            features: { power_cards: L.power_cards === true, social: true, competitions: true, fans: false },
+            match_days: matchDays,
+            slots,
+            slogans: [],
+          },
+        }).select("id").single();
+        if (leagueIns.error) throw leagueIns.error;
+        const leagueId = leagueIns.data.id;
+
+        const venuesIns = await admin.from("venues").insert(
+          venueNames.map((v) => ({ league_id: leagueId, name: String(v).slice(0, 40), all_slots: true })),
+        ).select("id, name");
+        if (venuesIns.error) throw venuesIns.error;
+        const venueIdByName = new Map(venuesIns.data.map((v) => [v.name, v.id]));
+
+        const stagesToInsert = [{
+          league_id: leagueId, type: "groups", order_no: 1, legs: 1,
+          config: { groups: groups.length, qualify_per_group: qualify },
+        }];
+        if (L.knockout === true && groups.length === 2) {
+          stagesToInsert.push({
+            league_id: leagueId, type: "knockout", order_no: 2, legs: 1,
+            // deno-lint-ignore no-explicit-any
+            config: { third_place: true } as any,
+          });
+        }
+        const stagesIns = await admin.from("stages").insert(stagesToInsert).select("id, type");
+        if (stagesIns.error) throw stagesIns.error;
+        const groupsStageId = stagesIns.data.find((s) => s.type === "groups")!.id;
+        const koStageId = stagesIns.data.find((s) => s.type === "knockout")?.id;
+
+        const groupsIns = await admin.from("groups").insert(
+          groups.map((g) => ({ stage_id: groupsStageId, name: String(g.name).slice(0, 4) })),
+        ).select("id, name");
+        if (groupsIns.error) throw groupsIns.error;
+        const groupIdByName = new Map(groupsIns.data.map((g) => [g.name, g.id]));
+
+        for (const g of groups) {
+          const letter = String(g.name);
+          const teamsIns = await admin.from("teams").insert(
+            g.teams.map((t: string, i: number) => ({
+              league_id: leagueId,
+              short_code: `${letter}${i + 1}`,
+              name: String(t).trim().slice(0, 40) || `فريق ${letter}${i + 1}`,
+              group_code: letter,
+            })),
+          ).select("id, short_code");
+          if (teamsIns.error) throw teamsIns.error;
+
+          const gt = await admin.from("group_teams").insert(
+            teamsIns.data.map((t, i) => ({
+              group_id: groupIdByName.get(letter)!, team_id: t.id, seed_no: i + 1,
+            })),
+          );
+          if (gt.error) throw gt.error;
+
+          // لاعبون وهميون (7 لكل فريق) + كود انضمام
+          for (const t of teamsIns.data) {
+            const players = [];
+            for (let n = 1; n <= 7; n++) {
+              players.push({
+                team_id: t.id,
+                code: `${t.short_code}-${n}`,
+                shirt_number: n,
+                name: n === 1 ? "الحارس" : `لاعب ${n}`,
+                position: n === 1 ? "حارس" : "لاعب",
+              });
+            }
+            const pIns = await admin.from("players").insert(players);
+            if (pIns.error) throw pIns.error;
+            const codeIns = await admin.from("team_join_codes").insert({
+              team_id: t.id,
+              code: crypto.randomUUID().replace(/-/g, "").slice(0, 6).toUpperCase(),
+            });
+            if (codeIns.error) throw codeIns.error;
+          }
+        }
+
+        const { data: allTeams } = await admin
+          .from("teams").select("id, short_code").eq("league_id", leagueId);
+        const teamIdByCode = new Map((allTeams ?? []).map((t) => [t.short_code, t.id]));
+
+        const matchRows = fixtures.map((f, i) => {
+          const stageKind = String(f.stage ?? "group");
+          const isGroup = stageKind === "group";
+          return {
+            league_id: leagueId,
+            stage_id: isGroup ? groupsStageId : (koStageId ?? groupsStageId),
+            group_id: isGroup
+              ? (groupIdByName.get(String(f.home).charAt(0)) ?? null)
+              : null,
+            code: `m${i + 1}`,
+            stage_kind: stageKind,
+            round_no: Math.max(1, matchDays.indexOf(String(f.day)) + 1),
+            match_day: String(f.day),
+            slot: String(f.slot),
+            venue_id: venueIdByName.get(String(f.venue)) ?? venuesIns.data[0].id,
+            home_side: String(f.home),
+            away_side: String(f.away),
+            home_team_id: teamIdByCode.get(String(f.home)) ?? null,
+            away_team_id: teamIdByCode.get(String(f.away)) ?? null,
+            duration_override_minutes: f.dur ? Number(f.dur) : null,
+          };
+        });
+        const mIns = await admin.from("matches").insert(matchRows);
+        if (mIns.error) throw mIns.error;
+
+        if (L.power_cards === true) {
+          const cardsIns = await admin.from("power_card_templates").insert(
+            DEFAULT_POWER_CARDS.map((c) => ({ league_id: leagueId, ...c })),
+          ).select("id");
+          if (cardsIns.error) throw cardsIns.error;
+          const tc = await admin.from("team_cards").insert(
+            (allTeams ?? []).flatMap((t) =>
+              cardsIns.data.map((c) => ({
+                team_id: t.id, template_id: c.id, quantity: 1, acquired_from: "initial",
+              }))
+            ),
+          );
+          if (tc.error) throw tc.error;
+        }
+
+        return json({ ok: true, league_id: leagueId });
       }
       default:
         return json({ error: "unknown_action" }, 400);

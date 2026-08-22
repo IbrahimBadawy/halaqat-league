@@ -2,8 +2,91 @@
 
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useLeague } from "@/lib/league/store";
+
+/** شاشة إجبارية: حساب أنشأه/أعاد تعيينه الأدمن لا يتابع قبل اختيار كلمة سر خاصة */
+function ForcePasswordChange() {
+  const { user, changePassword, signOut } = useLeague();
+  const [p1, setP1] = useState("");
+  const [p2, setP2] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (busy) return;
+    if (p1.length < 8) {
+      setError("كلمة المرور 8 أحرف على الأقل");
+      return;
+    }
+    if (p1 !== p2) {
+      setError("الكلمتان غير متطابقتين");
+      return;
+    }
+    setBusy(true);
+    const msg = await changePassword(p1);
+    setBusy(false);
+    setError(msg);
+  }
+
+  return (
+    <div className="mx-auto flex min-h-dvh w-full max-w-[430px] flex-col justify-center px-6 pitch-glow">
+      <div className="card px-4 py-5">
+        <div className="mb-1 text-center text-[28px]">🔐</div>
+        <h1 className="mb-1 text-center font-display text-[19px] font-bold text-white">
+          أهلًا {user?.displayName} — غيّر كلمة مرورك أولًا
+        </h1>
+        <p className="mb-4 text-center text-[13px] leading-relaxed" style={{ color: "var(--text-3)" }}>
+          الكلمة الحالية مؤقتة (أنشأها مدير الدوري). اختر كلمة سرية خاصة بك
+          للمتابعة — 8 أحرف على الأقل.
+        </p>
+        <form onSubmit={submit} className="flex flex-col gap-2.5">
+          <input
+            type="password"
+            value={p1}
+            onChange={(e) => setP1(e.target.value)}
+            placeholder="كلمة المرور الجديدة"
+            autoComplete="new-password"
+            dir="ltr"
+            className="h-12 w-full rounded-[12px] px-3.5 text-[15px] text-white outline-none"
+            style={{ background: "rgba(255,255,255,.06)", border: "1px solid var(--border-soft)" }}
+          />
+          <input
+            type="password"
+            value={p2}
+            onChange={(e) => setP2(e.target.value)}
+            placeholder="تأكيد كلمة المرور"
+            autoComplete="new-password"
+            dir="ltr"
+            className="h-12 w-full rounded-[12px] px-3.5 text-[15px] text-white outline-none"
+            style={{ background: "rgba(255,255,255,.06)", border: "1px solid var(--border-soft)" }}
+          />
+          {error ? (
+            <p className="text-[13px] font-semibold" style={{ color: "var(--live)" }}>
+              {error}
+            </p>
+          ) : null}
+          <button
+            type="submit"
+            disabled={busy || !p1 || !p2}
+            className="btn-gold h-12 w-full text-[15px] disabled:opacity-40"
+          >
+            {busy ? "جارٍ الحفظ…" : "حفظ والمتابعة"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void signOut()}
+            className="h-11 w-full rounded-[12px] text-[13.5px] font-semibold"
+            style={{ background: "rgba(255,255,255,.05)", border: "1px solid var(--border-soft)", color: "var(--text-2)" }}
+          >
+            خروج والعودة كزائر
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
 
 function NavIcon({ name, active }: { name: string; active: boolean }) {
   const c = active ? "var(--gold)" : "var(--text-3)";
@@ -65,7 +148,10 @@ const TABS = [
 
 export default function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const { state } = useLeague();
+  const { state, user } = useLeague();
+
+  // بوابة إجبارية قبل أي شيء: كلمة المرور المؤقتة يجب استبدالها
+  if (user?.mustChangePassword) return <ForcePasswordChange />;
 
   // شاشات ملء الشاشة بلا شريط سفلي: الكونسول ولوحة الأدمن ووضع TV والبوستر
   const bare =

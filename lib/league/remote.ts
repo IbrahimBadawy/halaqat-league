@@ -1,7 +1,10 @@
-// طبقة Supabase البعيدة — جلب بيانات الدوري وتحويلها إلى نفس أشكال المخزن
-// المحلي (LeagueSeed + حالة حية بمفاتيح الأكواد m1../A1../A1-4)، بحيث لا
-// تتغير أي صفحة. الكتابة كلها تمر عبر Edge Function واحدة (live-write)
-// بتحقق PIN — الـ RLS يبقى مقفولًا للكتابة المباشرة.
+// طبقة Supabase البعيدة — جلب بيانات الدوري النشط وتحويلها إلى نفس أشكال
+// المخزن (LeagueSeed + حالة حية بمفاتيح الأكواد m1../A1../A1-4)، بحيث لا
+// تتغير الصفحات. الكتابة كلها عبر Edge Function واحدة (live-write) بتحقق
+// JWT + أدوار — الـ RLS يبقى مقفولًا للكتابة المباشرة.
+//
+// تعدد الدوريات: كل الاستعلامات الأم مقيدة بـ league_id، والجداول الابنة
+// تُرشَّح عبر خرائط الأكواد (صف ابن أبوه خارج الدوري النشط يسقط تلقائيًا).
 
 import { SUPABASE_KEY, SUPABASE_URL, supabase } from "../supabase/client";
 import { enqueueWrite, type WriteResult } from "./queue";
@@ -34,6 +37,32 @@ export interface CardUsageLite {
   teamCardId: string;
 }
 
+export interface LeagueInfo {
+  id: string;
+  name: string;
+  season: string | null;
+  slug: string;
+  status: string;
+}
+
+export interface JoinRequestInfo {
+  id: string;
+  teamCode: string;
+  userId: string;
+  username: string;
+  displayName: string;
+  status: "pending" | "approved" | "rejected";
+  createdAt: number;
+}
+
+export interface ProfileInfo {
+  id: string;
+  username: string;
+  displayName: string;
+  accountType: string;
+  isPlatformAdmin: boolean;
+}
+
 export interface RemoteLive {
   statuses: Record<string, MatchStatus>;
   clocks: Record<string, ClockState>;
@@ -47,6 +76,18 @@ export interface RemoteLive {
   posts: Post[];
   /** توقعات هذا الجهاز: matchCode -> نتيجة */
   predictions: Record<string, Prediction>;
+  /** userId -> teamCode للاعبين المرتبطين بحسابات (في الدوري النشط) */
+  playerTeams: Record<string, string>;
+  /** teamCode -> userId كابتن الفريق */
+  captains: Record<string, string | null>;
+  /** طلبات الانضمام المرئية لهذا المستخدم (RLS يحدد) */
+  joinRequests: JoinRequestInfo[];
+  /** teamCode -> كود الانضمام (يظهر للكابتن والأدمن فقط عبر RLS) */
+  joinCodes: Record<string, string>;
+  /** كل الملفات الشخصية (لإدارة الحسابات والكباتن) */
+  profiles: ProfileInfo[];
+  /** userId -> أدوار العضوية في الدوري النشط */
+  members: Record<string, string[]>;
 }
 
 /** خرائط uuid ↔ أكواد الواجهة — تلزم للكتابة فقط */
@@ -78,6 +119,12 @@ export function emptyLive(): RemoteLive {
     audit: [],
     posts: [],
     predictions: {},
+    playerTeams: {},
+    captains: {},
+    joinRequests: [],
+    joinCodes: {},
+    profiles: [],
+    members: {},
   };
 }
 
@@ -121,54 +168,98 @@ const DEFAULT_RULES: LeagueRules = {
   red_card_suspension_matches: 1,
 };
 
-export async function fetchRemote(): Promise<RemoteSnapshot> {
-  const [
-    leagueQ,
-    venuesQ,
-    availQ,
-    teamsQ,
-    playersQ,
-    stagesQ,
-    matchesQ,
-    eventsQ,
-    reportsQ,
-    lineupsQ,
-    adjQ,
-    templatesQ,
-    teamCardsQ,
-    usagesQ,
-    auditQ,
-    postsQ,
-    predictionsQ,
-  ] = await Promise.all([
-    supabase.from("leagues").select("*").limit(1).single(),
-    supabase.from("venues").select("*"),
-    supabase.from("venue_availability").select("*"),
-    supabase.from("teams").select("*").order("short_code"),
-    supabase.from("players").select("*").order("shirt_number"),
-    supabase.from("stages").select("*"),
-    supabase.from("matches").select("*"),
-    supabase.from("match_events").select("*").order("created_at"),
-    supabase.from("match_reports").select("*"),
-    supabase.from("match_lineups").select("*").eq("is_starter", true),
-    supabase.from("standing_adjustments").select("*").order("created_at"),
-    supabase.from("power_card_templates").select("*"),
-    supabase.from("team_cards").select("*"),
-    supabase.from("card_usages").select("*").order("created_at"),
-    supabase.from("audit_log").select("*").order("created_at", { ascending: false }).limit(300),
-    supabase.from("posts").select("*").order("created_at", { ascending: false }).limit(200),
-    supabase.from("predictions").select("*").eq("device_key", deviceKey()),
-  ]);
+/** كل الدوريات على المنصة (للمبدّل) — الأقدم أولًا */
+export async function fetchLeagues(): Promise<LeagueInfo[]> {
+  const { data, error } = await supabase
+    .from("leagues")
+    .select("id, name, season, slug, status")
+    .order("created_at");
+  if (error) throw error;
+  return data;
+}
 
-  for (const q of [
-    leagueQ, venuesQ, availQ, teamsQ, playersQ, stagesQ, matchesQ, eventsQ,
-    reportsQ, lineupsQ, adjQ, templatesQ, teamCardsQ, usagesQ, auditQ,
-    postsQ, predictionsQ,
-  ]) {
+export async function fetchRemote(leagueId?: string): Promise<RemoteSnapshot> {
+  // المرحلة 1: الدوري وكياناته الأم (مقيدة كلها بالدوري)
+  const leagueQ = leagueId
+    ? await supabase.from("leagues").select("*").eq("id", leagueId).maybeSingle()
+    : await supabase.from("leagues").select("*").order("created_at").limit(1).maybeSingle();
+  if (leagueQ.error) throw leagueQ.error;
+  if (!leagueQ.data) throw new Error("لا يوجد دوري");
+  const league = leagueQ.data;
+
+  const [venuesQ, teamsQ, stagesQ, matchesQ, templatesQ, adjQ, auditQ, postsQ, profilesQ, membersQ] =
+    await Promise.all([
+      supabase.from("venues").select("*").eq("league_id", league.id),
+      supabase.from("teams").select("*").eq("league_id", league.id).order("short_code"),
+      supabase.from("stages").select("*").eq("league_id", league.id),
+      supabase.from("matches").select("*").eq("league_id", league.id),
+      supabase.from("power_card_templates").select("*").eq("league_id", league.id),
+      supabase.from("standing_adjustments").select("*").eq("league_id", league.id).order("created_at"),
+      supabase.from("audit_log").select("*").eq("league_id", league.id)
+        .order("created_at", { ascending: false }).limit(300),
+      supabase.from("posts").select("*").eq("league_id", league.id)
+        .order("created_at", { ascending: false }).limit(200),
+      supabase.from("profiles").select("id, username, display_name, account_type, is_platform_admin")
+        .order("username"),
+      supabase.from("league_members").select("user_id, roles").eq("league_id", league.id)
+        .eq("status", "active"),
+    ]);
+  for (const q of [venuesQ, teamsQ, stagesQ, matchesQ, templatesQ, adjQ, auditQ, postsQ, profilesQ, membersQ]) {
     if (q.error) throw q.error;
   }
 
-  const league = leagueQ.data!;
+  const venueIds = venuesQ.data!.map((v) => v.id);
+  const teamIds = teamsQ.data!.map((t) => t.id);
+  const stageIds = stagesQ.data!.map((s) => s.id);
+  const matchIds = matchesQ.data!.map((m) => m.id);
+
+  // المرحلة 2: الجداول الابنة (in على معرفات الدوري النشط — قوائم صغيرة)
+  const emptyOk = { data: [] as never[], error: null };
+  const [availQ, playersQ, groupsQ, groupTeamsQ, eventsQ, reportsQ, lineupsQ, teamCardsQ, usagesQ, predictionsQ, joinReqQ, joinCodesQ] =
+    await Promise.all([
+      venueIds.length
+        ? supabase.from("venue_availability").select("*").in("venue_id", venueIds)
+        : Promise.resolve(emptyOk),
+      teamIds.length
+        ? supabase.from("players").select("*").in("team_id", teamIds).order("shirt_number")
+        : Promise.resolve(emptyOk),
+      stageIds.length
+        ? supabase.from("groups").select("*").in("stage_id", stageIds)
+        : Promise.resolve(emptyOk),
+      teamIds.length
+        ? supabase.from("group_teams").select("*").in("team_id", teamIds)
+        : Promise.resolve(emptyOk),
+      matchIds.length
+        ? supabase.from("match_events").select("*").in("match_id", matchIds).order("created_at")
+        : Promise.resolve(emptyOk),
+      matchIds.length
+        ? supabase.from("match_reports").select("*").in("match_id", matchIds)
+        : Promise.resolve(emptyOk),
+      matchIds.length
+        ? supabase.from("match_lineups").select("*").in("match_id", matchIds).eq("is_starter", true)
+        : Promise.resolve(emptyOk),
+      teamIds.length
+        ? supabase.from("team_cards").select("*").in("team_id", teamIds)
+        : Promise.resolve(emptyOk),
+      matchIds.length
+        ? supabase.from("card_usages").select("*").in("match_id", matchIds).order("created_at")
+        : Promise.resolve(emptyOk),
+      matchIds.length
+        ? supabase.from("predictions").select("*").eq("device_key", deviceKey()).in("match_id", matchIds)
+        : Promise.resolve(emptyOk),
+      teamIds.length
+        ? supabase.from("join_requests")
+            .select("*, profiles!join_requests_user_id_fkey(username, display_name)")
+            .in("team_id", teamIds).order("created_at", { ascending: false })
+        : Promise.resolve(emptyOk),
+      teamIds.length
+        ? supabase.from("team_join_codes").select("*").in("team_id", teamIds)
+        : Promise.resolve(emptyOk),
+    ]);
+  for (const q of [availQ, playersQ, groupsQ, groupTeamsQ, eventsQ, reportsQ, lineupsQ, teamCardsQ, usagesQ, predictionsQ, joinReqQ, joinCodesQ]) {
+    if (q.error) throw q.error;
+  }
+
   const settings = (league.settings ?? {}) as {
     rules?: Partial<LeagueRules>;
     match_days?: string[];
@@ -243,7 +334,6 @@ export async function fetchRemote(): Promise<RemoteSnapshot> {
       slot: m.slot,
       venue: nameByVenue[m.venue_id],
       stage: m.stage_kind as StageKind,
-      // الليلة تُشتق من اليوم المنطقي (لا نعتمد round_no المخزن بعد إعادة الجدولة)
       round: matchDays.indexOf(m.match_day) + 1 || m.round_no,
       home: m.home_side,
       away: m.away_side,
@@ -407,11 +497,59 @@ export async function fetchRemote(): Promise<RemoteSnapshot> {
     if (code) predictions[code] = { home: pr.home, away: pr.away };
   }
 
+  const playerTeams: Record<string, string> = {};
+  for (const p of playersQ.data!) {
+    if (p.user_id && codeByTeam[p.team_id]) playerTeams[p.user_id] = codeByTeam[p.team_id];
+  }
+
+  const captains: Record<string, string | null> = {};
+  for (const t of teamsQ.data!) captains[t.short_code] = t.captain_id;
+
+  const joinRequests: JoinRequestInfo[] = joinReqQ
+    .data!.map((r) => {
+      const teamCode = codeByTeam[(r as { team_id: string }).team_id];
+      if (!teamCode) return null;
+      const row = r as unknown as {
+        id: string; user_id: string; status: string; created_at: string;
+        profiles: { username: string; display_name: string } | null;
+      };
+      return {
+        id: row.id,
+        teamCode,
+        userId: row.user_id,
+        username: row.profiles?.username ?? "",
+        displayName: row.profiles?.display_name ?? row.profiles?.username ?? "مستخدم",
+        status: row.status as JoinRequestInfo["status"],
+        createdAt: Date.parse(row.created_at),
+      };
+    })
+    .filter((r): r is JoinRequestInfo => r !== null);
+
+  const joinCodes: Record<string, string> = {};
+  for (const jc of joinCodesQ.data!) {
+    const teamCode = codeByTeam[(jc as { team_id: string }).team_id];
+    if (teamCode) joinCodes[teamCode] = (jc as { code: string }).code;
+  }
+
+  const profiles: ProfileInfo[] = profilesQ.data!.map((p) => ({
+    id: p.id,
+    username: p.username,
+    displayName: p.display_name,
+    accountType: p.account_type,
+    isPlatformAdmin: p.is_platform_admin,
+  }));
+
+  const members: Record<string, string[]> = {};
+  for (const m of membersQ.data!) {
+    members[m.user_id] = [...(members[m.user_id] ?? []), ...(m.roles as string[])];
+  }
+
   return {
     seed,
     live: {
       statuses, clocks, events, reports, adjustments, starters, usages, audit,
-      posts, predictions,
+      posts, predictions, playerTeams, captains, joinRequests, joinCodes,
+      profiles, members,
     },
     ids: {
       leagueId: league.id,
@@ -431,39 +569,76 @@ export function queueWrite(action: string, payload: unknown): void {
   enqueueWrite(action, payload);
 }
 
-/**
- * إرسال عملية واحدة للبوابة. التمييز مهم للطابور: "offline" يُعاد للأبد،
- * و"reject" (وصل الخادم ورفض) يُعاد محدودًا ثم يُسقط.
- */
-export async function liveWrite(action: string, payload: unknown): Promise<WriteResult> {
-  let res: Response;
-  // توكن الجلسة يحدد الصلاحية في البوابة — الزائر بلا توكن يكتب الأفعال العامة فقط
+async function gatewayFetch(
+  path: string,
+  body: unknown,
+): Promise<{ status: number; body: { ok?: boolean; error?: string; [k: string]: unknown } | null }> {
   const { data: session } = await supabase.auth.getSession();
   const token = session.session?.access_token;
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: SUPABASE_KEY,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+  let parsed: { ok?: boolean; error?: string } | null = null;
   try {
-    res = await fetch(`${SUPABASE_URL}/functions/v1/live-write`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: SUPABASE_KEY,
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify({ action, payload }),
-    });
+    parsed = await res.json();
+  } catch {
+    parsed = null;
+  }
+  return { status: res.status, body: parsed };
+}
+
+/**
+ * إرسال عملية واحدة للبوابة (لطابور الكتابة). التمييز مهم: "offline" يُعاد
+ * للأبد، و"reject" (وصل الخادم ورفض) يُعاد محدودًا ثم يُسقط.
+ */
+export async function liveWrite(action: string, payload: unknown): Promise<WriteResult> {
+  let res: { status: number; body: { ok?: boolean; error?: string } | null };
+  try {
+    res = await gatewayFetch("live-write", { action, payload });
   } catch (e) {
-    // فشل شبكة/DNS/انقطاع — لم يصل الطلب أصلًا
     console.warn("live-write تعذّر الاتصال:", action, e);
     return "offline";
   }
-  // 5xx قد يكون عطلًا عابرًا في البنية التحتية قبل وصول الطلب لمنطقنا
-  if (res.status >= 500 && res.status !== 500) return "offline";
-  let body: { ok?: boolean; error?: string } | null = null;
-  try {
-    body = (await res.json()) as { ok?: boolean; error?: string };
-  } catch {
-    body = null;
-  }
-  if (res.ok && body?.ok) return "ok";
-  console.error("live-write رفض:", action, res.status, body?.error);
+  if (res.status > 500) return "offline";
+  if (res.status >= 200 && res.status < 300 && res.body?.ok) return "ok";
+  console.error("live-write رفض:", action, res.status, res.body?.error);
   return "reject";
+}
+
+/** نداء تفاعلي للبوابة يعيد رسالة الخطأ للواجهة (خارج الطابور) */
+export async function liveCall(
+  action: string,
+  payload: unknown,
+): Promise<{ ok: boolean; error?: string; data?: Record<string, unknown> }> {
+  try {
+    const res = await gatewayFetch("live-write", { action, payload });
+    if (res.status >= 200 && res.status < 300 && res.body?.ok) {
+      return { ok: true, data: res.body as Record<string, unknown> };
+    }
+    return { ok: false, error: res.body?.error ?? `خطأ ${res.status}` };
+  } catch {
+    return { ok: false, error: "تعذّر الاتصال بالخادم" };
+  }
+}
+
+/** نداء دالة الحسابات (تسجيل/إنشاء/إعادة تعيين) */
+export async function accountsCall(
+  action: string,
+  fields: Record<string, unknown>,
+): Promise<{ ok: boolean; error?: string; data?: Record<string, unknown> }> {
+  try {
+    const res = await gatewayFetch("accounts", { action, ...fields });
+    if (res.status >= 200 && res.status < 300 && res.body?.ok) {
+      return { ok: true, data: res.body as Record<string, unknown> };
+    }
+    return { ok: false, error: res.body?.error ?? `خطأ ${res.status}` };
+  } catch {
+    return { ok: false, error: "تعذّر الاتصال بالخادم" };
+  }
 }

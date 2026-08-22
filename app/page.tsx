@@ -23,7 +23,9 @@ const STORIES = [
 export default function HomePage() {
   const store = useLeague();
   const { seed, matches, statusOf, scoreOf, minuteOf, resolveSide, eventsOf, hydrated } = store;
+  const { leagues, activeLeagueId, setActiveLeague } = store;
   const [, tick] = useState(0);
+  const [showLeagues, setShowLeagues] = useState(false);
 
   // كل الجارية الآن — قد تتوازى مباراتان في نفس الفترة على ملعبين
   const liveMatches = matches.filter(
@@ -69,12 +71,23 @@ export default function HomePage() {
           <Shield code="ح" size={34} />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block font-display text-[18px] font-bold leading-tight text-white">
-            دوري الحلقات
-          </span>
+          {/* اسم الدوري النشط — يفتح مبدّل الدوريات عند وجود أكثر من دوري */}
+          <button
+            onClick={() => leagues.length > 1 && setShowLeagues(true)}
+            className="flex max-w-full items-center gap-1 text-start"
+          >
+            <span className="truncate font-display text-[18px] font-bold leading-tight text-white">
+              {seed.name.split("—")[0].trim()}
+            </span>
+            {leagues.length > 1 ? (
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" strokeWidth="3" strokeLinecap="round">
+                <path d="m6 9 6 6 6-6" />
+              </svg>
+            ) : null}
+          </button>
           <span className="block text-[13.5px] font-medium" style={{ color: "var(--text-3)" }}>
             {formatNight(currentNight)} — الليلة <span className="num">{nightNumber}</span> من{" "}
-            <span className="num">4</span>
+            <span className="num">{seed.matchDays.length}</span>
           </span>
         </span>
         <Link
@@ -283,6 +296,53 @@ export default function HomePage() {
 
       {/* مختصر الترتيب */}
       <MiniStandings />
+
+      {/* مبدّل الدوريات — زي برامج الكورة */}
+      {showLeagues ? (
+        <div
+          className="sheet-backdrop fixed inset-0 z-50 flex items-end justify-center"
+          onClick={() => setShowLeagues(false)}
+        >
+          <div
+            className="sheet max-h-[70dvh] w-full max-w-[430px] overflow-y-auto px-4 pb-8 pt-3"
+            onClick={(ev) => ev.stopPropagation()}
+          >
+            <div className="mx-auto mb-3 h-1.5 w-12 rounded-full" style={{ background: "rgba(255,255,255,.25)" }} />
+            <div className="mb-3 font-display text-[17px] font-bold text-white">اختر الدوري</div>
+            {leagues.map((l) => {
+              const active = l.id === activeLeagueId;
+              return (
+                <button
+                  key={l.id}
+                  onClick={() => {
+                    setActiveLeague(l.id);
+                    setShowLeagues(false);
+                  }}
+                  className="mb-2 flex w-full items-center gap-2.5 rounded-[13px] px-3.5 py-3 text-start"
+                  style={
+                    active
+                      ? { background: "rgba(224,178,74,.13)", border: "1.5px solid rgba(224,178,74,.55)" }
+                      : { background: "rgba(255,255,255,.04)", border: "1px solid var(--border-soft)" }
+                  }
+                >
+                  <span className="text-[20px]">🏆</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[14.5px] font-bold text-white">{l.name}</span>
+                    <span className="block text-[12px]" style={{ color: "var(--text-3)" }}>
+                      {l.season ?? ""}{l.status === "archived" ? " · مؤرشف" : ""}
+                    </span>
+                  </span>
+                  {active ? (
+                    <span className="text-[13px] font-bold" style={{ color: "var(--gold-light)" }}>
+                      الحالي ✓
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

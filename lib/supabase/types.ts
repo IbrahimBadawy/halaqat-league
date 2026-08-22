@@ -192,6 +192,58 @@ export type Database = {
           },
         ]
       }
+      join_requests: {
+        Row: {
+          created_at: string
+          decided_at: string | null
+          decided_by: string | null
+          id: string
+          status: string
+          team_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          decided_at?: string | null
+          decided_by?: string | null
+          id?: string
+          status?: string
+          team_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          decided_at?: string | null
+          decided_by?: string | null
+          id?: string
+          status?: string
+          team_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "join_requests_decided_by_fkey"
+            columns: ["decided_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "join_requests_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "join_requests_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       league_members: {
         Row: {
           created_at: string
@@ -834,29 +886,35 @@ export type Database = {
       }
       profiles: {
         Row: {
+          account_type: string
           avatar_url: string | null
           created_at: string
           display_name: string
           id: string
           is_platform_admin: boolean
+          must_change_password: boolean
           position: string | null
           username: string
         }
         Insert: {
+          account_type?: string
           avatar_url?: string | null
           created_at?: string
           display_name: string
           id: string
           is_platform_admin?: boolean
+          must_change_password?: boolean
           position?: string | null
           username: string
         }
         Update: {
+          account_type?: string
           avatar_url?: string | null
           created_at?: string
           display_name?: string
           id?: string
           is_platform_admin?: boolean
+          must_change_password?: boolean
           position?: string | null
           username?: string
         }
@@ -987,6 +1045,29 @@ export type Database = {
             columns: ["template_id"]
             isOneToOne: false
             referencedRelation: "power_card_templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      team_join_codes: {
+        Row: {
+          code: string
+          team_id: string
+        }
+        Insert: {
+          code: string
+          team_id: string
+        }
+        Update: {
+          code?: string
+          team_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "team_join_codes_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: true
+            referencedRelation: "teams"
             referencedColumns: ["id"]
           },
         ]
