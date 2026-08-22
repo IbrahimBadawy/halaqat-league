@@ -19,7 +19,7 @@
   "venues": [
     { "name": "ملعب 1", "availability": "all_slots" },
     { "name": "ملعب 2", "availability": [
-      { "date": "2026-09-04", "slots": ["23:40", "00:00"] },
+      { "date": "2026-09-04", "slots": ["00:00", "00:20", "00:40"], "_note": "حجز الملعب: اللعب يبدأ من 12:00 ص" },
       { "date": "2026-09-11", "slots": ["23:00"], "_note": "نصفا النهائي في نفس الوقت على ملعبين" }
     ] }
   ],
@@ -61,9 +61,9 @@
     { "match_day": "2026-08-28", "slot": "00:40", "venue": "ملعب 1", "home": "B1", "away": "B5" },
 
     { "match_day": "2026-09-04", "slot": "23:00", "venue": "ملعب 1", "home": "A1", "away": "A4" },
-    { "match_day": "2026-09-04", "slot": "23:20", "venue": "ملعب 1", "home": "B1", "away": "B4" },
+    { "match_day": "2026-09-04", "slot": "00:40", "venue": "ملعب 2", "home": "B1", "away": "B4" },
     { "match_day": "2026-09-04", "slot": "23:40", "venue": "ملعب 1", "home": "A3", "away": "A4" },
-    { "match_day": "2026-09-04", "slot": "23:40", "venue": "ملعب 2", "home": "A2", "away": "A5" },
+    { "match_day": "2026-09-04", "slot": "23:20", "venue": "ملعب 1", "home": "A2", "away": "A5" },
     { "match_day": "2026-09-04", "slot": "00:00", "venue": "ملعب 1", "home": "B3", "away": "B4" },
     { "match_day": "2026-09-04", "slot": "00:00", "venue": "ملعب 2", "home": "B2", "away": "B5" },
     { "match_day": "2026-09-04", "slot": "00:20", "venue": "ملعب 1", "home": "A3", "away": "A5" },
