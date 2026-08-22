@@ -16,7 +16,7 @@ const ROLES: { role: Role; label: string; desc: string; icon: string }[] = [
 ];
 
 export default function MePage() {
-  const { state, setRole, resetAll, hydrated, pendingWrites } = useLeague();
+  const { state, setRole, resetAll, hydrated, pendingWrites, droppedWrites } = useLeague();
   const [confirmReset, setConfirmReset] = useState(false);
   if (!hydrated) return null;
 
@@ -92,6 +92,19 @@ export default function MePage() {
           {pendingWrites > 0 ? "تُرسل تلقائيًا عند عودة الاتصال" : "النتائج تظهر لكل الأجهزة فورًا"}
         </span>
       </div>
+
+      {droppedWrites > 0 ? (
+        <div
+          className="card mb-4 flex items-start gap-2.5 px-3.5 py-3"
+          style={{ borderColor: "rgba(229,72,77,.5)", background: "rgba(229,72,77,.08)" }}
+        >
+          <span className="text-[18px]">⚠️</span>
+          <span className="flex-1 text-[13px] font-semibold" style={{ color: "var(--live)" }}>
+            <span className="num">{droppedWrites}</span> عملية رفضها الخادم ولم تُحفظ — راجع
+            المباراة المعنية وأعد تسجيل ما ينقص يدويًا.
+          </span>
+        </div>
+      ) : null}
 
       <SectionTitle>هذا الجهاز</SectionTitle>
       <div className="mb-2 flex flex-col gap-2 pb-6">

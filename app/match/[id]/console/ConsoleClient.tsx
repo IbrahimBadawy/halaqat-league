@@ -234,16 +234,29 @@ export default function ConsolePage() {
         <span
           className="pill inline-flex items-center gap-1.5 px-2.5 py-1 text-[13px] font-semibold"
           style={
-            store.pendingWrites > 0
-              ? { color: "var(--warn)", background: "rgba(244,196,48,.14)" }
-              : { color: "var(--green-text)", background: "rgba(30,127,58,.14)" }
+            store.droppedWrites > 0
+              ? { color: "var(--live)", background: "rgba(229,72,77,.14)" }
+              : store.pendingWrites > 0
+                ? { color: "var(--warn)", background: "rgba(244,196,48,.14)" }
+                : { color: "var(--green-text)", background: "rgba(30,127,58,.14)" }
           }
         >
           <span
             className="h-1.5 w-1.5 rounded-full"
-            style={{ background: store.pendingWrites > 0 ? "var(--warn)" : "var(--green-text)" }}
+            style={{
+              background:
+                store.droppedWrites > 0
+                  ? "var(--live)"
+                  : store.pendingWrites > 0
+                    ? "var(--warn)"
+                    : "var(--green-text)",
+            }}
           />
-          {store.pendingWrites > 0 ? (
+          {store.droppedWrites > 0 ? (
+            <>
+              ⚠️ فشل <span className="num">{store.droppedWrites}</span>
+            </>
+          ) : store.pendingWrites > 0 ? (
             <>
               بانتظار الشبكة <span className="num">{store.pendingWrites}</span>
             </>

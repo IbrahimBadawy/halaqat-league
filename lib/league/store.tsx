@@ -37,7 +37,7 @@ import {
   type RemoteIds,
   type RemoteLive,
 } from "./remote";
-import { pendingWrites, startQueue, subscribeQueue } from "./queue";
+import { droppedWrites, pendingWrites, startQueue, subscribeQueue } from "./queue";
 import type { ActivePowerCard, ClockState } from "./live-types";
 import type {
   AuditEntry,
@@ -140,10 +140,12 @@ export interface LeagueStore {
   onFieldPlayers: (matchId: string, teamCode: string) => Player[];
   benchPlayers: (matchId: string, teamCode: string) => Player[];
 
-  /** تعارضات الجدول الحالية كلها (ملعب محجوز، فريق مزدوج، فجوة، إتاحة) */
   /** كتابات لم تصل القاعدة بعد (انقطاع شبكة) — تُرسل تلقائيًا عند العودة */
   pendingWrites: number;
+  /** كتابات أُسقطت نهائيًا بعد رفض متكرر — تستدعي تدخلًا يدويًا */
+  droppedWrites: number;
 
+  /** تعارضات الجدول الحالية كلها (ملعب محجوز، فريق مزدوج، فجوة، إتاحة) */
   scheduleConflicts: ScheduleConflict[];
   conflictsOf: (matchId: string) => ScheduleConflict[];
   /** أقرب (يوم/فترة/ملعب) خالٍ من التعارضات لهذه المباراة */
@@ -193,6 +195,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
   const [hydrated, setHydrated] = useState(false);
   const [connected, setConnected] = useState(false);
   const [pending, setPending] = useState(0);
+  const [dropped, setDropped] = useState(0);
 
   const liveRef = useRef(live);
   liveRef.current = live;
@@ -212,11 +215,13 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  // طابور الكتابة: يستأنف ما لم يُرسل من جلسة سابقة ويعيد المحاولة تلقائيًا
+  // طابور الكتابة: يستأنف ما لم يُرسل من جلسة سابقة ويعيد المحاولة تلقائيًا.
+  // ما يُسقطه الطابور نهائيًا يُعرض للمستخدم بدل ابتلاعه صامتًا.
   useEffect(() => {
-    const stop = startQueue(liveWrite);
+    const stop = startQueue(liveWrite, () => setDropped(droppedWrites()));
     const unsub = subscribeQueue(setPending);
     setPending(pendingWrites());
+    setDropped(droppedWrites());
     return () => {
       unsub();
       stop();
@@ -277,6 +282,12 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     const refetch = () => {
       if (timer) clearTimeout(timer);
       timer = setTimeout(async () => {
+        // لا نستبدل الحالة ما دامت هناك كتابات لم تصل القاعدة بعد — وإلا
+        // محت اللقطةُ القادمةُ حدثًا سجّله المسجّل للتو وما زال في الطابور
+        if (pendingWrites() > 0) {
+          refetch();
+          return;
+        }
         try {
           applySnapshot(await fetchRemote());
         } catch {
@@ -598,8 +609,9 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
 
   /** يسجل قيد تدقيق محليًا فورًا ويرسله للقاعدة */
   const pushAudit = useCallback((action: string, entity: string, detail: string) => {
+    // معرّف من العميل حتى تكون إعادة الإرسال بلا تكرار (upsert في البوابة)
     const entry: AuditEntry = {
-      id: newId("a"),
+      id: eventUuid(),
       at: Date.now(),
       actor: localRef.current.role,
       action,
@@ -611,6 +623,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     if (ids) {
       queueWrite("insert_audit", {
         entry: {
+          id: entry.id,
           league_id: ids.leagueId,
           actor_role: entry.actor,
           action,
@@ -1154,6 +1167,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
       if (ids) {
         queueWrite("insert_adjustment", {
           adjustment: {
+            id: eventUuid(),
             league_id: ids.leagueId,
             team_id: ids.teamByCode[adj.teamCode],
             points: adj.points,
@@ -1189,6 +1203,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     matches,
     matchOf,
     pendingWrites: pending,
+    droppedWrites: dropped,
     scheduleConflicts,
     conflictsOf,
     suggestReschedule,

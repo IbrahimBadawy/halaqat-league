@@ -5,6 +5,9 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 // تعمل بمفتاح service_role بعد تحقق PIN، ولا تسمح إلا بأفعال محددة
 // بأعمدة محددة (لا كتابة حرة على أي جدول). تُستبدل بصلاحيات Auth الحقيقية
 // في مهمة المصادقة. verify_jwt معطل لأن المصادقة هنا مخصصة (PIN).
+//
+// كل الإدراجات upsert بمعرّف من العميل (ignoreDuplicates): طابور الكتابة
+// قد يعيد إرسال طلب نجح ولم تصل استجابته، فلا يجوز أن يكرر أو يفشل.
 
 const PIN = Deno.env.get("LIVE_PIN") ?? "1234";
 
@@ -57,15 +60,17 @@ const REPORT_FIELDS = [
   "match_id", "motm_player_id", "referee_notes", "recorder_signed_at",
   "approved_at",
 ];
-const ADJUSTMENT_FIELDS = ["league_id", "team_id", "points", "reason", "source"];
+const ADJUSTMENT_FIELDS = [
+  "id", "league_id", "team_id", "points", "reason", "source",
+];
 const USAGE_FIELDS = [
   "id", "team_card_id", "match_id", "status", "minute", "effect_snapshot",
   "applied_at",
 ];
 const AUDIT_FIELDS = [
-  "league_id", "actor_role", "action", "entity", "entity_id", "detail",
+  "id", "league_id", "actor_role", "action", "entity", "entity_id", "detail",
 ];
-const POST_FIELDS = ["id", "league_id", "author_name", "text", "created_at"];
+const POST_FIELDS = ["id", "league_id", "author_name", "text"];
 const PREDICTION_FIELDS = [
   "league_id", "match_id", "device_key", "home", "away",
 ];
@@ -99,7 +104,10 @@ Deno.serve(async (req: Request) => {
           (e: Record<string, unknown>) => pick(e, EVENT_INSERT_FIELDS),
         );
         if (rows.length === 0) return json({ error: "no_events" }, 400);
-        const { error } = await admin.from("match_events").insert(rows);
+        // upsert بمعرّف العميل: إعادة إرسال طلب نجح ولم تصل استجابته لا تكرر الحدث
+        const { error } = await admin
+          .from("match_events")
+          .upsert(rows, { onConflict: "id", ignoreDuplicates: true });
         if (error) throw error;
         return json({ ok: true });
       }
@@ -143,13 +151,14 @@ Deno.serve(async (req: Request) => {
           (x: unknown) => UUID_RE.test(String(x)),
         );
         if (players.length > 0) {
-          const ins = await admin.from("match_lineups").insert(
+          const ins = await admin.from("match_lineups").upsert(
             players.map((pid: string) => ({
               match_id: p.match_id,
               team_id: p.team_id,
               player_id: pid,
               is_starter: true,
             })),
+            { onConflict: "match_id,player_id" },
           );
           if (ins.error) throw ins.error;
         }
@@ -168,7 +177,10 @@ Deno.serve(async (req: Request) => {
       case "insert_adjustment": {
         const { error } = await admin
           .from("standing_adjustments")
-          .insert(pick(p.adjustment ?? {}, ADJUSTMENT_FIELDS));
+          .upsert(pick(p.adjustment ?? {}, ADJUSTMENT_FIELDS), {
+            onConflict: "id",
+            ignoreDuplicates: true,
+          });
         if (error) throw error;
         return json({ ok: true });
       }
@@ -184,7 +196,10 @@ Deno.serve(async (req: Request) => {
       case "insert_audit": {
         const { error } = await admin
           .from("audit_log")
-          .insert(pick(p.entry ?? {}, AUDIT_FIELDS));
+          .upsert(pick(p.entry ?? {}, AUDIT_FIELDS), {
+            onConflict: "id",
+            ignoreDuplicates: true,
+          });
         if (error) throw error;
         return json({ ok: true });
       }
@@ -193,11 +208,16 @@ Deno.serve(async (req: Request) => {
         const text = String(row.text ?? "").trim();
         const author = String(row.author_name ?? "").trim();
         if (!text || !author) return json({ error: "empty_post" }, 400);
-        const { error } = await admin.from("posts").insert({
-          ...row,
-          text: text.slice(0, MAX_POST_LEN),
-          author_name: author.slice(0, MAX_NAME_LEN),
-        });
+        const { error } = await admin.from("posts").upsert(
+          {
+            ...row,
+            text: text.slice(0, MAX_POST_LEN),
+            author_name: author.slice(0, MAX_NAME_LEN),
+            // الوقت من الخادم: لا نسمح لعميل بتثبيت منشوره أعلى الفيد بتاريخ مستقبلي
+            created_at: new Date().toISOString(),
+          },
+          { onConflict: "id", ignoreDuplicates: true },
+        );
         if (error) throw error;
         return json({ ok: true });
       }

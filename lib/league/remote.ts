@@ -3,8 +3,8 @@
 // تتغير أي صفحة. الكتابة كلها تمر عبر Edge Function واحدة (live-write)
 // بتحقق PIN — الـ RLS يبقى مقفولًا للكتابة المباشرة.
 
-import { supabase } from "../supabase/client";
-import { enqueueWrite } from "./queue";
+import { SUPABASE_KEY, SUPABASE_URL, supabase } from "../supabase/client";
+import { enqueueWrite, type WriteResult } from "./queue";
 import { slotToMinutes, type LeagueSeed } from "./seed";
 import type { ClockState } from "./live-types";
 import type {
@@ -443,23 +443,32 @@ export function queueWrite(action: string, payload: unknown): void {
   enqueueWrite(action, payload);
 }
 
-export async function liveWrite(action: string, payload: unknown): Promise<boolean> {
+/**
+ * إرسال عملية واحدة للبوابة. التمييز مهم للطابور: "offline" يُعاد للأبد،
+ * و"reject" (وصل الخادم ورفض) يُعاد محدودًا ثم يُسقط.
+ */
+export async function liveWrite(action: string, payload: unknown): Promise<WriteResult> {
+  let res: Response;
   try {
-    const { data, error } = await supabase.functions.invoke("live-write", {
-      body: { pin: livePin(), action, payload },
+    res = await fetch(`${SUPABASE_URL}/functions/v1/live-write`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: SUPABASE_KEY },
+      body: JSON.stringify({ pin: livePin(), action, payload }),
     });
-    if (error) {
-      console.error("live-write فشل:", action, error);
-      return false;
-    }
-    const res = data as { ok?: boolean; error?: string } | null;
-    if (res?.error) {
-      console.error("live-write رفض:", action, res.error);
-      return false;
-    }
-    return true;
   } catch (e) {
-    console.error("live-write استثناء:", action, e);
-    return false;
+    // فشل شبكة/DNS/انقطاع — لم يصل الطلب أصلًا
+    console.warn("live-write تعذّر الاتصال:", action, e);
+    return "offline";
   }
+  // 5xx قد يكون عطلًا عابرًا في البنية التحتية قبل وصول الطلب لمنطقنا
+  if (res.status >= 500 && res.status !== 500) return "offline";
+  let body: { ok?: boolean; error?: string } | null = null;
+  try {
+    body = (await res.json()) as { ok?: boolean; error?: string };
+  } catch {
+    body = null;
+  }
+  if (res.ok && body?.ok) return "ok";
+  console.error("live-write رفض:", action, res.status, body?.error);
+  return "reject";
 }
