@@ -41,7 +41,6 @@ export default function NewLeaguePage() {
   const [slotMinutes, setSlotMinutes] = useState(20);
   const [qualify, setQualify] = useState(2);
   const [yellowLimit, setYellowLimit] = useState(2);
-  const [redMatches, setRedMatches] = useState(1);
   const [knockout, setKnockout] = useState(true);
   const [powerCards, setPowerCards] = useState(true);
   const [fixtures, setFixtures] = useState<GeneratedFixture[] | null>(null);
@@ -150,7 +149,6 @@ export default function NewLeaguePage() {
         slot_minutes: slotMinutes,
         qualify_per_group: qualify,
         yellow_cards_for_suspension: yellowLimit,
-        red_card_suspension_matches: redMatches,
         final_duration_override_minutes: 30,
       },
       knockout: knockout && knockoutPossible,
@@ -296,7 +294,6 @@ export default function NewLeaguePage() {
                 ["دقائق الفترة", slotMinutes, setSlotMinutes, 10, 120],
                 ["يتأهل من كل مجموعة", qualify, setQualify, 1, 4],
                 ["إنذارات الإيقاف", yellowLimit, setYellowLimit, 1, 5],
-                ["مباريات إيقاف الطرد", redMatches, setRedMatches, 1, 3],
               ] as const
             ).map(([label, value, setter, min, max]) => (
               <label key={label} className="text-[12.5px] font-bold">

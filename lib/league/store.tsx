@@ -117,7 +117,6 @@ export interface NewLeaguePayload {
     slot_minutes: number;
     qualify_per_group: number;
     yellow_cards_for_suspension: number;
-    red_card_suspension_matches: number;
     final_duration_override_minutes: number;
   };
   knockout: boolean;
