@@ -607,6 +607,7 @@ export type Database = {
           code: string
           created_at: string
           duration_override_minutes: number | null
+          halves_override: number | null
           group_id: string | null
           home_pens: number | null
           home_score: number | null
@@ -634,6 +635,7 @@ export type Database = {
           code: string
           created_at?: string
           duration_override_minutes?: number | null
+          halves_override?: number | null
           group_id?: string | null
           home_pens?: number | null
           home_score?: number | null
@@ -661,6 +663,7 @@ export type Database = {
           code?: string
           created_at?: string
           duration_override_minutes?: number | null
+          halves_override?: number | null
           group_id?: string | null
           home_pens?: number | null
           home_score?: number | null

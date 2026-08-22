@@ -56,6 +56,8 @@ export default function ConsolePage() {
   const match = store.matchOf(params.id);
   const [pending, setPending] = useState<PendingAction>(null);
   const [subOut, setSubOut] = useState<Player | null>(null);
+  /** لاعب اختير للطرد — تُفتح له ورقة اختيار مدة العقوبة قبل التسجيل */
+  const [redFor, setRedFor] = useState<Player | null>(null);
   const [undoEvent, setUndoEvent] = useState<MatchEvent | null>(null);
   const [showTimeline, setShowTimeline] = useState(false);
   const [showEnd, setShowEnd] = useState(false);
@@ -135,11 +137,15 @@ export default function ConsolePage() {
   const periodSec = clock!.periodSeconds + extraSec;
   const totalSec = clock!.totalSeconds + extraSec;
   const minute = Math.min(99, Math.floor(totalSec / 60) + 1);
-  const halfLen = (match.durationOverrideMinutes ?? seed.rules.half_minutes * seed.rules.halves) / seed.rules.halves;
+  // عدد الأشواط قد يُخصَّص لكل مباراة (شوط واحد أو شوطان)، والمدة الكلية كذلك
+  const halves = match.halvesOverride ?? seed.rules.halves;
+  const halfLen = (match.durationOverrideMinutes ?? seed.rules.half_minutes * seed.rules.halves) / halves;
 
   const periodLabel =
     clock!.period === "first"
-      ? "الشوط الأول"
+      ? halves === 1
+        ? "الشوط الوحيد"
+        : "الشوط الأول"
       : clock!.period === "break"
         ? "استراحة"
         : clock!.period === "second"
@@ -147,6 +153,16 @@ export default function ConsolePage() {
           : clock!.period === "extra"
             ? "وقت إضافي"
             : "انتهت";
+
+  // العقوبات المؤقتة الجارية الآن (طرد دقائق لم تنقضِ مدته)
+  const servingPenalties = state.events.filter(
+    (e) =>
+      e.matchId === match.id &&
+      e.type === "red" &&
+      !e.deleted &&
+      e.penaltyScope === "minutes" &&
+      (e.penaltyUntilSec ?? 0) > totalSec,
+  );
 
   const fmt = (s: number) =>
     `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
@@ -182,6 +198,12 @@ export default function ConsolePage() {
       return;
     }
     if (pending.kind === "event") {
+      // الطرد يحتاج خطوة ثالثة: اختيار مدة العقوبة (دقائق/المباراة/الدوري)
+      if (pending.type === "red") {
+        setRedFor(player);
+        setPending(null);
+        return;
+      }
       const e = store.recordEvent(match.id, {
         matchId: match.id,
         teamCode: player.teamCode,
@@ -192,6 +214,20 @@ export default function ConsolePage() {
       setPending(null);
       if (navigator.vibrate) navigator.vibrate(30);
     }
+  }
+
+  function recordRed(player: Player, scope: "minutes" | "match" | "league", minutes?: number) {
+    const e = store.recordEvent(match!.id, {
+      matchId: match!.id,
+      teamCode: player.teamCode,
+      playerId: player.id,
+      type: "red",
+      penaltyScope: scope,
+      ...(scope === "minutes" ? { penaltyMinutes: minutes } : {}),
+    });
+    pushUndo(e);
+    setRedFor(null);
+    if (navigator.vibrate) navigator.vibrate(30);
   }
 
   function onBenchTapForSub(player: Player) {
@@ -293,6 +329,24 @@ export default function ConsolePage() {
         </span>
       </div>
 
+      {/* عدّاد الطرد المؤقت — اللاعب يعود تلقائيًا عند انقضاء مدته */}
+      {servingPenalties.length > 0 ? (
+        <div
+          className="mx-4 mt-1.5 flex flex-none flex-wrap items-center gap-2 rounded-[12px] px-3 py-2 text-[12.5px] font-bold"
+          style={{ background: "rgba(229,72,77,.13)", color: "var(--live)", border: "1px solid rgba(229,72,77,.4)" }}
+        >
+          🟥
+          {servingPenalties.map((e) => (
+            <span key={e.id} className="flex items-center gap-1.5">
+              {seed.players.find((p) => p.id === e.playerId)?.name}
+              <span className="num pill px-2 py-0.5" style={{ background: "rgba(229,72,77,.2)" }}>
+                {fmt(Math.max(0, Math.round((e.penaltyUntilSec ?? 0) - totalSec)))}
+              </span>
+            </span>
+          ))}
+        </div>
+      ) : null}
+
       {/* تنبيه الموقوفين */}
       {suspendedHere.length > 0 && status === "scheduled" ? (
         <div
@@ -331,7 +385,9 @@ export default function ConsolePage() {
           {status === "scheduled"
             ? "بدء المباراة"
             : clock!.period === "first"
-              ? "إنهاء الشوط"
+              ? halves === 1
+                ? "وقت إضافي"
+                : "إنهاء الشوط"
               : clock!.period === "break"
                 ? "بدء الشوط الثاني"
                 : "وقت إضافي"}
@@ -346,7 +402,7 @@ export default function ConsolePage() {
             ) : (
               <>
                 {periodLabel} · د <span className="num">{minute}</span> · الشوط{" "}
-                <span className="num">{fmt(halfLen * 60)}</span>
+                <span className="num">{fmt(Math.round(halfLen * 60))}</span>
               </>
             )}
           </span>
@@ -556,6 +612,48 @@ export default function ConsolePage() {
         </div>
       ) : null}
 
+      {/* ورقة مدة الطرد: دقائق يعود بعدها اللاعب، أو باقي المباراة، أو طرد من
+          الدوري كله (الوحيد الذي يمنع من التشكيلات القادمة) */}
+      {redFor ? (
+        <Sheet title={`🟥 طرد ${redFor.name} — حدد العقوبة`} onClose={() => setRedFor(null)}>
+          <div className="flex flex-col gap-2">
+            {(seed.rules.red_penalty_minutes_options ?? [2, 5]).map((min) => (
+              <button
+                key={min}
+                onClick={() => recordRed(redFor, "minutes", min)}
+                className="flex h-[52px] items-center justify-between rounded-[13px] px-4 text-[14.5px] font-bold text-white"
+                style={{ background: "rgba(229,72,77,.14)", border: "1px solid rgba(229,72,77,.4)" }}
+              >
+                ⏱️ طرد <span className="num">{min}</span> دقائق
+                <span className="text-[12px] font-medium" style={{ color: "var(--text-3)" }}>
+                  يعود بعد انقضائها
+                </span>
+              </button>
+            ))}
+            <button
+              onClick={() => recordRed(redFor, "match")}
+              className="flex h-[52px] items-center justify-between rounded-[13px] px-4 text-[14.5px] font-bold text-white"
+              style={{ background: "rgba(229,72,77,.2)", border: "1px solid rgba(229,72,77,.55)" }}
+            >
+              🟥 باقي المباراة
+              <span className="text-[12px] font-medium" style={{ color: "var(--text-3)" }}>
+                لا يؤثر على المباريات القادمة
+              </span>
+            </button>
+            <button
+              onClick={() => recordRed(redFor, "league")}
+              className="flex h-[52px] items-center justify-between rounded-[13px] px-4 text-[14.5px] font-bold"
+              style={{ background: "rgba(229,72,77,.32)", border: "1.5px solid var(--live)", color: "#FFD9DB" }}
+            >
+              🚫 طرد من الدوري كله
+              <span className="text-[12px] font-medium" style={{ color: "#FFB3B7" }}>
+                يُمنع من كل التشكيلات القادمة
+              </span>
+            </button>
+          </div>
+        </Sheet>
+      ) : null}
+
       {/* ورقة التعليق السريع */}
       {pending?.kind === "event" && pending.type === "comment" ? (
         <Sheet title="تعليق سريع" onClose={() => setPending(null)}>
@@ -678,7 +776,15 @@ function PlayerChip({
     .reduce((s, e) => s + e.value, 0);
   const yellows = playerEvents.filter((e) => e.type === "yellow").length;
   const suspended = store.isSuspended(p.id, matchId);
-  const sentOff = playerEvents.some((e) => e.type === "red") || suspended;
+  // الطرد المؤقت (دقائق) ينتهي بانقضاء مدته على ساعة المباراة — فيعود اللاعب
+  const c = store.clockOf(matchId);
+  const nowSec = c.totalSeconds + (c.running && c.runningSince ? (Date.now() - c.runningSince) / 1000 : 0);
+  const redBlocks = playerEvents.some(
+    (e) =>
+      e.type === "red" &&
+      (e.penaltyScope === "minutes" ? (e.penaltyUntilSec ?? 0) > nowSec : true),
+  );
+  const sentOff = redBlocks || suspended;
   return (
     <button
       onClick={onTap}
@@ -729,6 +835,13 @@ function TimelineRow({ e }: { e: MatchEvent }) {
       <span className="text-[15px]">{meta?.icon ?? "•"}</span>
       <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-white" style={e.deleted ? { textDecoration: "line-through", opacity: 0.5 } : undefined}>
         {meta?.label}
+        {e.type === "red" && e.penaltyScope
+          ? e.penaltyScope === "minutes"
+            ? ` ${e.penaltyMinutes} د`
+            : e.penaltyScope === "league"
+              ? " من الدوري"
+              : " باقي المباراة"
+          : ""}
         {e.value > 1 ? " ×2" : ""} — {pName ?? store.teamByCode(e.teamCode)?.name}
         {e.note ? ` · ${e.note}` : ""}
       </span>

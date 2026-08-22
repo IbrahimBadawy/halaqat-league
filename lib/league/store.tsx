@@ -112,6 +112,7 @@ export interface NewLeaguePayload {
   slots: string[];
   venues: string[];
   rules: {
+    halves: 1 | 2;
     half_minutes: number;
     slot_minutes: number;
     qualify_per_group: number;
@@ -265,6 +266,8 @@ export interface LeagueStore {
   ) => Promise<string | null>;
   /** مدة مخصصة لمباراة بالدقائق (null = مدة الدوري الافتراضية) */
   setMatchDuration: (matchId: string, minutes: number | null) => void;
+  /** عدد أشواط مخصص لمباراة: 1 أو 2 (null = افتراضي الدوري) */
+  setMatchHalves: (matchId: string, halves: 1 | 2 | null) => void;
   /** قفل (archived) أو فتح (active) دوري */
   setLeagueStatus: (leagueId: string, status: "active" | "archived") => Promise<string | null>;
   adminCreateAccount: (
@@ -756,7 +759,6 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
           teamCode: team.code,
           events: state.events,
           yellowsForSuspension: seed.rules.yellow_cards_for_suspension,
-          redSuspensionMatches: seed.rules.red_card_suspension_matches,
         }),
       );
     }
@@ -825,6 +827,14 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
       note: e.note ?? null,
       linked_to: e.linkedTo ?? null,
       power_card: e.powerCard ?? null,
+      // عقوبة الطرد تسافر في meta — لا عمود مخصص لها
+      meta: e.penaltyScope
+        ? {
+            penalty_scope: e.penaltyScope,
+            penalty_minutes: e.penaltyMinutes ?? null,
+            penalty_until_sec: e.penaltyUntilSec ?? null,
+          }
+        : {},
       created_at: new Date(e.createdAt).toISOString(),
     };
   }, []);
@@ -1237,6 +1247,30 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     [pushAudit],
   );
 
+  const setMatchHalves = useCallback(
+    (matchId: string, halves: 1 | 2 | null) => {
+      setSeed((s) => ({
+        ...s,
+        matches: s.matches.map((m) =>
+          m.id === matchId ? { ...m, halvesOverride: halves ?? undefined } : m,
+        ),
+      }));
+      const ids = idsRef.current;
+      if (ids) {
+        queueWrite("update_match", {
+          id: ids.matchByCode[matchId],
+          patch: { halves_override: halves },
+        });
+      }
+      pushAudit(
+        "تغيير أشواط مباراة",
+        matchId,
+        halves ? (halves === 1 ? "شوط واحد" : "شوطان") : "عادت لافتراضي الدوري",
+      );
+    },
+    [pushAudit],
+  );
+
   const likePost = useCallback((postId: string) => {
     setLive((l) => ({
       ...l,
@@ -1301,7 +1335,12 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
       const c = flushClock(c0);
       let period: ClockState["period"] = c.period;
       let status: MatchStatus = liveRef.current.statuses[matchId] ?? "live";
-      if (c.period === "first") {
+      // مباراة الشوط الواحد: بعد الشوط الوحيد ننتقل للوقت الإضافي مباشرة
+      const seedMatch = seedRef.current.matches.find((m) => m.id === matchId);
+      const halves = seedMatch?.halvesOverride ?? seedRef.current.rules.halves;
+      if (c.period === "first" && halves <= 1) {
+        period = "extra";
+      } else if (c.period === "first") {
         period = "break";
         status = "half_time";
       } else if (c.period === "break") {
@@ -1355,6 +1394,12 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
       const value = consumeCard ? 2 : (e.value ?? 1);
       const now = Date.now();
 
+      // طرد مؤقت بالدقائق: نثبّت ثانية انتهاء العقوبة على ساعة المباراة الآن
+      const penaltyUntilSec =
+        e.type === "red" && e.penaltyScope === "minutes" && e.penaltyMinutes
+          ? Math.round(c.totalSeconds + extra + e.penaltyMinutes * 60)
+          : undefined;
+
       const event: MatchEvent = {
         ...e,
         id: eventUuid(),
@@ -1363,6 +1408,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
         period: period === "extra" ? "extra" : period,
         value,
         ...(consumeCard ? { powerCard: active.cardName } : {}),
+        ...(penaltyUntilSec !== undefined ? { penaltyUntilSec } : {}),
         createdAt: now,
       };
       const newEvents: MatchEvent[] = [event];
@@ -1388,6 +1434,8 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
             period: event.period,
             value: 1,
             linkedTo: event.id,
+            // طرد الإنذار الثاني = خروج لباقي المباراة (لا يمتد لمباراة تالية)
+            penaltyScope: "match",
             createdAt: now + 1,
           });
         }
@@ -1683,6 +1731,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     unbanPoster,
     updatePlayer,
     setMatchDuration,
+    setMatchHalves,
     adminCreateAccount,
     adminResetPassword,
     adminCreateLeague,

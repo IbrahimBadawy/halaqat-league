@@ -159,6 +159,21 @@ export function deviceKey(): string {
   }
 }
 
+/** عقوبة الطرد من meta الحدث (penalty_scope / penalty_minutes / penalty_until_sec) */
+function penaltyFromMeta(meta: unknown): Partial<
+  Pick<MatchEvent, "penaltyScope" | "penaltyMinutes" | "penaltyUntilSec">
+> {
+  if (!meta || typeof meta !== "object") return {};
+  const m = meta as Record<string, unknown>;
+  const scope = m.penalty_scope;
+  if (scope !== "minutes" && scope !== "match" && scope !== "league") return {};
+  return {
+    penaltyScope: scope,
+    penaltyMinutes: typeof m.penalty_minutes === "number" ? m.penalty_minutes : undefined,
+    penaltyUntilSec: typeof m.penalty_until_sec === "number" ? m.penalty_until_sec : undefined,
+  };
+}
+
 const APP_STATUSES: MatchStatus[] = [
   "scheduled",
   "live",
@@ -177,6 +192,7 @@ const DEFAULT_RULES: LeagueRules = {
   tiebreakers: ["points", "head_to_head", "goal_difference", "goals_for", "fair_play", "draw"],
   yellow_cards_for_suspension: 2,
   red_card_suspension_matches: 1,
+  red_penalty_minutes_options: [2, 5],
 };
 
 /** كل الدوريات على المنصة (للمبدّل) — الأقدم أولًا */
@@ -359,6 +375,7 @@ export async function fetchRemote(leagueId?: string): Promise<RemoteSnapshot> {
       home: m.home_side,
       away: m.away_side,
       durationOverrideMinutes: m.duration_override_minutes ?? undefined,
+      halvesOverride: m.halves_override ?? undefined,
     }))
     .sort(
       (a, b) =>
@@ -451,6 +468,7 @@ export async function fetchRemote(leagueId?: string): Promise<RemoteSnapshot> {
       deletedReason: e.deleted_reason ?? undefined,
       linkedTo: e.linked_to ?? undefined,
       powerCard: e.power_card ?? undefined,
+      ...penaltyFromMeta(e.meta),
     }));
 
   const starters: Record<string, Record<string, string[]>> = {};

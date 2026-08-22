@@ -37,6 +37,7 @@ export default function NewLeaguePage() {
   const [slotsText, setSlotsText] = useState("23:00\n23:20\n23:40\n00:00\n00:20\n00:40");
   const [venuesText, setVenuesText] = useState("ملعب 1");
   const [halfMinutes, setHalfMinutes] = useState(8);
+  const [halvesCount, setHalvesCount] = useState<1 | 2>(2);
   const [slotMinutes, setSlotMinutes] = useState(20);
   const [qualify, setQualify] = useState(2);
   const [yellowLimit, setYellowLimit] = useState(2);
@@ -144,6 +145,7 @@ export default function NewLeaguePage() {
       slots,
       venues: venuesList,
       rules: {
+        halves: halvesCount,
         half_minutes: halfMinutes,
         slot_minutes: slotMinutes,
         qualify_per_group: qualify,
@@ -268,6 +270,26 @@ export default function NewLeaguePage() {
         <section className="mb-4 rounded-[16px] bg-white p-4" style={{ border: BORDER }}>
           <h2 className="mb-3 font-display text-[16px] font-bold">4 · القواعد</h2>
           <div className="flex flex-wrap items-end gap-3">
+            {/* المباراة شوط واحد أم شوطان — ويمكن تخصيصها لكل مباراة من محرر الجدول */}
+            <div className="text-[12.5px] font-bold">
+              نظام المباراة
+              <div className="mt-1 flex overflow-hidden rounded-[10px]" style={{ border: BORDER }}>
+                {([2, 1] as const).map((h) => (
+                  <button
+                    key={h}
+                    onClick={() => setHalvesCount(h)}
+                    className="h-11 px-4 text-[13px] font-bold"
+                    style={
+                      halvesCount === h
+                        ? { background: "#0B1230", color: "#fff" }
+                        : { background: "#F7F9FE" }
+                    }
+                  >
+                    {h === 2 ? "شوطان" : "شوط واحد"}
+                  </button>
+                ))}
+              </div>
+            </div>
             {(
               [
                 ["دقائق الشوط", halfMinutes, setHalfMinutes, 1, 45],

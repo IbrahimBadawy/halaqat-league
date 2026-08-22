@@ -39,10 +39,21 @@ export default function RulesPage() {
       <div className="card mb-4 overflow-hidden">
         {[
           ["نظام النقاط", `فوز ${r.points.win} · تعادل ${r.points.draw} · خسارة ${r.points.loss}`],
-          ["مدة المباراة", `شوطان × ${r.half_minutes} دقائق`],
+          [
+            "مدة المباراة",
+            r.halves === 1
+              ? `شوط واحد من ${r.half_minutes * r.halves} دقيقة`
+              : `شوطان × ${r.half_minutes} دقائق`,
+          ],
+          ["نظام الأشواط", "قد تُحدد الإدارة لأي مباراة شوطًا واحدًا أو شوطين ومدة مخصصة"],
           ["النهائي", `فترة ${r.final_duration_override_minutes} دقيقة`],
           ["التبديلات", r.substitutions === "unlimited" ? "مفتوحة" : r.substitutions],
-          ["الإيقاف", `إنذاران = إيقاف مباراة · الطرد = إيقاف ${r.red_card_suspension_matches} مباراة`],
+          [
+            "الطرد",
+            `مؤقت بمدة يحددها الحكم (${(r.red_penalty_minutes_options ?? [2, 5]).join(" أو ")} دقائق) أو باقي المباراة — لا يمتد لمباراة تالية`,
+          ],
+          ["الطرد من الدوري", "أشد عقوبة: يُمنع اللاعب من كل المباريات المتبقية ويكمل فريقه بلاعب آخر"],
+          ["الإنذارات", `${r.yellow_cards_for_suspension} إنذارات متراكمة = إيقاف مباراة`],
         ].map(([k, v]) => (
           <div key={k} className="flex items-center justify-between gap-3 px-3.5 py-2.5" style={{ borderBottom: "1px solid var(--border-softer)" }}>
             <span className="text-[13.5px] font-semibold text-white">{k}</span>

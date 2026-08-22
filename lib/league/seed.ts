@@ -18,6 +18,7 @@ interface SeedFixture {
   away: string;
   stage?: string;
   duration_override_minutes?: number;
+  halves_override?: number;
 }
 
 export interface LeagueSeed {
@@ -96,6 +97,7 @@ export function loadSeed(): LeagueSeed {
     home: f.home,
     away: f.away,
     durationOverrideMinutes: f.duration_override_minutes,
+    halvesOverride: f.halves_override,
   }));
 
   const groupsStage = s.format.stages.find((st) => st.type === "groups");

@@ -183,6 +183,7 @@ export default function AdminSchedulePage() {
                       <th className="px-2 py-2 text-start">الفترة</th>
                       <th className="px-2 py-2 text-start">الملعب</th>
                       <th className="px-2 py-2 text-start">المدة (د)</th>
+                      <th className="px-2 py-2 text-start">الأشواط</th>
                       <th className="px-2 py-2 text-start">إجراء</th>
                     </tr>
                   </thead>
@@ -293,6 +294,25 @@ export default function AdminSchedulePage() {
                               />
                             </td>
                             <td className="px-2 py-2.5">
+                              {/* شوط واحد أو شوطان لهذه المباراة — فارغ = افتراضي الدوري */}
+                              <select
+                                value={m.halvesOverride ?? ""}
+                                disabled={locked}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  store.setMatchHalves(m.id, v === "" ? null : (Number(v) as 1 | 2));
+                                }}
+                                className="h-10 w-full min-w-[104px] rounded-[10px] px-2 text-[13px] font-semibold disabled:opacity-45"
+                                style={selectStyle}
+                              >
+                                <option value="">
+                                  افتراضي ({seed.rules.halves === 1 ? "شوط" : "شوطان"})
+                                </option>
+                                <option value="1">شوط واحد</option>
+                                <option value="2">شوطان</option>
+                              </select>
+                            </td>
+                            <td className="px-2 py-2.5">
                               <div className="flex items-center gap-2">
                                 <button
                                   disabled={locked}
@@ -311,7 +331,7 @@ export default function AdminSchedulePage() {
                             </td>
                           </tr>
                           <tr style={{ background: conflicted ? "#FFFBFA" : undefined }}>
-                            <td colSpan={6} className="px-4 pb-2.5" style={{ borderInlineStart: rowBorder }}>
+                            <td colSpan={7} className="px-4 pb-2.5" style={{ borderInlineStart: rowBorder }}>
                               {conflicted ? (
                                 <div className="flex flex-wrap gap-1.5">
                                   {rowConflicts.map((c, i) => (

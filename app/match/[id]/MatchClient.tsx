@@ -167,6 +167,11 @@ export default function MatchPage() {
                 · {match.durationOverrideMinutes} د
               </span>
             ) : null}
+            {match.halvesOverride ? (
+              <span className="text-[13px] font-semibold opacity-80">
+                · {match.halvesOverride === 1 ? "شوط واحد" : "شوطان"}
+              </span>
+            ) : null}
           </button>
         ) : null}
       </div>
@@ -255,7 +260,15 @@ export default function MatchPage() {
           ? `تبديل — خروج ${playerName(e.playerId)} ودخول ${playerName(e.secondaryPlayerId)}`
           : e.type === "comment"
             ? e.note ?? "تعليق"
-            : `${meta.label} — ${playerName(e.playerId) || teamName(e.teamCode)}`;
+            : e.type === "red" && e.penaltyScope
+              ? `${meta.label} ${
+                  e.penaltyScope === "minutes"
+                    ? `${e.penaltyMinutes} دقائق`
+                    : e.penaltyScope === "league"
+                      ? "من الدوري كله"
+                      : "باقي المباراة"
+                } — ${playerName(e.playerId) || teamName(e.teamCode)}`
+              : `${meta.label} — ${playerName(e.playerId) || teamName(e.teamCode)}`;
     const sub =
       e.type === "goal" && e.secondaryPlayerId
         ? `صناعة: ${playerName(e.secondaryPlayerId)} · ${teamName(e.teamCode)}`

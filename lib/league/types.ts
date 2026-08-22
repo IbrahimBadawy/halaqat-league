@@ -37,6 +37,8 @@ export interface Match {
   home: string; // رمز فريق أو placeholder للإقصائيات (1A, W_semi_1 ...)
   away: string;
   durationOverrideMinutes?: number;
+  /** عدد أشواط مخصص لهذه المباراة (1 أو 2) — غيابه = افتراضي الدوري */
+  halvesOverride?: number;
 }
 
 export type EventType =
@@ -72,6 +74,15 @@ export interface MatchEvent {
   linkedTo?: string;
   /** اسم كارت القوة الذي طُبق أثره على هذا الحدث (هدف مضاعف) */
   powerCard?: string;
+  /**
+   * عقوبة الطرد (لأحداث red فقط): دقائق محددة يعود بعدها اللاعب، أو باقي
+   * المباراة، أو طرد من الدوري كله. الطرد لا يمتد لمباراة تالية إلا "league".
+   * غياب الحقل في حدث red قديم = باقي المباراة.
+   */
+  penaltyScope?: "minutes" | "match" | "league";
+  penaltyMinutes?: number;
+  /** ثانية ساعة المباراة (totalSeconds) التي تنتهي عندها العقوبة المؤقتة */
+  penaltyUntilSec?: number;
 }
 
 export interface StandingAdjustment {
@@ -98,7 +109,10 @@ export interface LeagueRules {
   substitutions: string;
   tiebreakers: Tiebreaker[];
   yellow_cards_for_suspension: number;
+  /** لم يعد الطرد يوقف مباريات تالية — يبقى الحقل في jsonb القديم فقط */
   red_card_suspension_matches: number;
+  /** خيارات الطرد المؤقت بالدقائق التي تُعرض للمسجّل (افتراضيًا 2 و5) */
+  red_penalty_minutes_options?: number[];
 }
 
 export interface StandingRow {

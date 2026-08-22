@@ -16,7 +16,12 @@ function m(id: string, slot: string): Match {
 }
 
 let n = 0;
-function ev(matchId: string, playerId: string, type: "yellow" | "red", subtype?: string): MatchEvent {
+function ev(
+  matchId: string,
+  playerId: string,
+  type: "yellow" | "red",
+  extra?: Partial<MatchEvent>,
+): MatchEvent {
   n += 1;
   return {
     id: `e${n}`,
@@ -24,11 +29,11 @@ function ev(matchId: string, playerId: string, type: "yellow" | "red", subtype?:
     teamCode: "A1",
     playerId,
     type,
-    subtype,
     minute: 5,
     period: "first",
     value: 1,
     createdAt: n,
+    ...extra,
   };
 }
 
@@ -39,16 +44,30 @@ const THREE_MATCHES = (approved: boolean[]) =>
   }));
 
 describe("computeTeamSuspensions", () => {
-  it("الطرد = إيقاف المباراة التالية", () => {
+  it("الطرد العادي (مؤقت أو باقي المباراة) لا يوقف أي مباراة تالية", () => {
     const out = computeTeamSuspensions({
       teamMatches: THREE_MATCHES([true, false, false]),
       teamCode: "A1",
-      events: [ev("m1", "A1-4", "red")],
+      events: [
+        ev("m1", "A1-4", "red", { penaltyScope: "minutes", penaltyMinutes: 2 }),
+        ev("m1", "A1-5", "red", { penaltyScope: "match" }),
+        ev("m1", "A1-6", "red"), // حدث قديم بلا عقوبة = باقي المباراة
+      ],
       yellowsForSuspension: 2,
-      redSuspensionMatches: 1,
+    });
+    expect(out).toEqual([]);
+  });
+
+  it("الطرد من الدوري = إيقاف كل المباريات التالية، نافذ قبل الاعتماد", () => {
+    const out = computeTeamSuspensions({
+      teamMatches: THREE_MATCHES([false, false, false]), // لم تُعتمد بعد
+      teamCode: "A1",
+      events: [ev("m1", "A1-4", "red", { penaltyScope: "league" })],
+      yellowsForSuspension: 2,
     });
     expect(out).toEqual([
-      { playerId: "A1-4", teamCode: "A1", forMatchId: "m2", reason: "طرد" },
+      { playerId: "A1-4", teamCode: "A1", forMatchId: "m2", reason: "مطرود من الدوري" },
+      { playerId: "A1-4", teamCode: "A1", forMatchId: "m3", reason: "مطرود من الدوري" },
     ]);
   });
 
@@ -58,7 +77,6 @@ describe("computeTeamSuspensions", () => {
       teamCode: "A1",
       events: [ev("m1", "A1-4", "yellow"), ev("m2", "A1-4", "yellow")],
       yellowsForSuspension: 2,
-      redSuspensionMatches: 1,
     });
     expect(out).toEqual([
       {
@@ -70,31 +88,32 @@ describe("computeTeamSuspensions", () => {
     ]);
   });
 
-  it("إنذاران في نفس المباراة مع طرد (إنذار ثانٍ) = إيقاف طرد واحد فقط بلا تراكم", () => {
+  it("إنذارا مباراة الطرد (الإنذار الثاني) يُستهلكان ولا يدخلان التراكم ولا يوقفان", () => {
     const out = computeTeamSuspensions({
       teamMatches: THREE_MATCHES([true, true, false]),
       teamCode: "A1",
       events: [
         ev("m1", "A1-4", "yellow"),
         ev("m1", "A1-4", "yellow"),
-        ev("m1", "A1-4", "red", "second_yellow"),
+        ev("m1", "A1-4", "red", { subtype: "second_yellow", penaltyScope: "match" }),
+        // إنذار في المباراة التالية — يبدأ التراكم من الصفر بعد الطرد
+        ev("m2", "A1-4", "yellow"),
       ],
       yellowsForSuspension: 2,
-      redSuspensionMatches: 1,
     });
-    expect(out).toEqual([
-      { playerId: "A1-4", teamCode: "A1", forMatchId: "m2", reason: "طرد" },
-    ]);
+    expect(out).toEqual([]);
   });
 
-  it("المباريات غير المعتمدة لا تدخل الحساب، والأحداث المحذوفة تُتجاهل", () => {
-    const deleted = { ...ev("m1", "A1-4", "red"), deleted: true };
+  it("المباريات غير المعتمدة لا تدخل حساب الإنذارات، والأحداث المحذوفة تُتجاهل حتى في طرد الدوري", () => {
+    const deletedLeagueRed = {
+      ...ev("m1", "A1-4", "red", { penaltyScope: "league" }),
+      deleted: true,
+    };
     const out = computeTeamSuspensions({
       teamMatches: THREE_MATCHES([true, false, false]),
       teamCode: "A1",
-      events: [deleted, ev("m2", "A1-5", "red")], // m2 غير معتمدة
+      events: [deletedLeagueRed, ev("m2", "A1-5", "yellow"), ev("m2", "A1-5", "yellow")], // m2 غير معتمدة
       yellowsForSuspension: 2,
-      redSuspensionMatches: 1,
     });
     expect(out).toEqual([]);
   });
@@ -105,7 +124,6 @@ describe("computeTeamSuspensions", () => {
       teamCode: "A1",
       events: [ev("m1", "A1-4", "yellow")],
       yellowsForSuspension: 2,
-      redSuspensionMatches: 1,
     });
     expect(out).toEqual([]);
   });

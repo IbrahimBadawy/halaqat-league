@@ -11,7 +11,8 @@
       "final_duration_override_minutes": 30,
       "substitutions": "unlimited",
       "tiebreakers": ["points", "head_to_head", "goal_difference", "goals_for", "fair_play", "draw"],
-      "yellow_cards_for_suspension": 2, "red_card_suspension_matches": 1
+      "yellow_cards_for_suspension": 2, "red_card_suspension_matches": 1,
+      "red_penalty_minutes_options": [2, 5]
     },
     "features": { "power_cards": true, "social": true, "competitions": true, "fans": false }
   },

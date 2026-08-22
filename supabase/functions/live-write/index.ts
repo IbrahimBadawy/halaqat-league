@@ -70,12 +70,12 @@ const UUID_RE =
 const MATCH_FIELDS = [
   "status", "clock", "home_score", "away_score", "home_pens", "away_pens",
   "match_day", "slot", "venue_id", "home_team_id", "away_team_id",
-  "winner_team_id", "locked", "duration_override_minutes",
+  "winner_team_id", "locked", "duration_override_minutes", "halves_override",
 ];
 const EVENT_INSERT_FIELDS = [
   "id", "match_id", "team_id", "player_id", "secondary_player_id", "type",
   "subtype", "minute", "period", "value", "note", "linked_to", "power_card",
-  "created_at",
+  "meta", "created_at",
 ];
 const EVENT_UPDATE_FIELDS = [
   "deleted_at", "deleted_reason", "edited_reason", "minute", "note",
@@ -564,7 +564,8 @@ Deno.serve(async (req: Request) => {
 
         const rules = {
           points: { win: 3, draw: 1, loss: 0 },
-          halves: 2,
+          // شوط واحد أو شوطان — من الويزارد، وقابل للتخصيص لكل مباراة لاحقًا
+          halves: Number(L.rules?.halves) === 1 ? 1 : 2,
           half_minutes: Number(L.rules?.half_minutes) || 8,
           slot_minutes: Number(L.rules?.slot_minutes) || 20,
           final_duration_override_minutes: Number(L.rules?.final_duration_override_minutes) || 30,
@@ -572,6 +573,7 @@ Deno.serve(async (req: Request) => {
           tiebreakers: ["points", "head_to_head", "goal_difference", "goals_for", "fair_play", "draw"],
           yellow_cards_for_suspension: Number(L.rules?.yellow_cards_for_suspension) || 2,
           red_card_suspension_matches: Number(L.rules?.red_card_suspension_matches) || 1,
+          red_penalty_minutes_options: [2, 5],
         };
         const qualify = Number(L.rules?.qualify_per_group) || 2;
 
