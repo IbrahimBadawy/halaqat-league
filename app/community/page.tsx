@@ -17,9 +17,7 @@ type FeedItem =
   | { kind: "system"; at: number; match: Match };
 
 export default function CommunityPage() {
-  const { seed, matches, hydrated, statusOf, scoreOf, resolveSide, state, addPost, likePost, connected } =
-    useLeague();
-  const { canModerate, deletePost, banPoster } = useLeague();
+  const { seed, matches, hydrated, statusOf, state, addPost, connected } = useLeague();
 
   const [author, setAuthor] = useState<string>(() =>
     typeof window === "undefined" ? "مشجع" : (localStorage.getItem(AUTHOR_KEY) ?? "مشجع"),
@@ -133,8 +131,13 @@ export default function CommunityPage() {
       </p>
     </div>
   );
+}
 
-  function UserPostCard({ post }: { post: Post }) {
+// المكونات على مستوى الملف عمدًا: تعريفها داخل الصفحة كان يعيد إنشاء نوعها
+// مع كل إعادة جلب من Realtime فتضيع حالة تأكيد الحذف/الحظر
+
+function UserPostCard({ post }: { post: Post }) {
+    const { likePost, canModerate, deletePost, banPoster } = useLeague();
     const liked = post.likes > 0;
     const [confirming, setConfirming] = useState<null | "delete" | "ban">(null);
     return (
@@ -223,9 +226,10 @@ export default function CommunityPage() {
         </div>
       </div>
     );
-  }
+}
 
-  function ResultPostCard({ match: m, at }: { match: Match; at: number }) {
+function ResultPostCard({ match: m, at }: { match: Match; at: number }) {
+    const { seed, resolveSide, scoreOf, state } = useLeague();
     const h = resolveSide(m.home);
     const a = resolveSide(m.away);
     const s = scoreOf(m.id);
@@ -264,5 +268,4 @@ export default function CommunityPage() {
         ) : null}
       </Link>
     );
-  }
 }

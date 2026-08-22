@@ -652,107 +652,122 @@ export default function ConsolePage() {
     </div>
   );
 
-  function PlayerChip({
-    p,
-    onTap,
-    highlight,
-    matchId,
-  }: {
-    p: Player;
-    onTap: () => void;
-    highlight: boolean;
-    matchId: string;
-  }) {
-    const playerEvents = state.events.filter(
-      (e) => e.matchId === matchId && e.playerId === p.id && !e.deleted,
-    );
-    const goals = playerEvents
-      .filter((e) => e.type === "goal")
-      .reduce((s, e) => s + e.value, 0);
-    const yellows = playerEvents.filter((e) => e.type === "yellow").length;
-    const suspended = store.isSuspended(p.id, matchId);
-    const sentOff = playerEvents.some((e) => e.type === "red") || suspended;
-    return (
-      <button
-        onClick={onTap}
-        disabled={sentOff}
-        className="flex h-12 flex-none items-center gap-2 rounded-[12px] px-2 text-start"
-        style={{
-          background: "linear-gradient(135deg,var(--surface-1),var(--surface-2))",
-          border: highlight ? "1.5px solid rgba(224,178,74,.55)" : "1px solid var(--border-soft)",
-          opacity: sentOff ? 0.45 : 1,
-        }}
-      >
-        <span
-          className="num flex h-[30px] w-[30px] flex-none items-center justify-center rounded-[9px] font-display text-[15px] font-bold"
-          style={{ background: "rgba(43,79,194,.3)", color: "var(--text-1)" }}
-        >
-          {p.shirt}
-        </span>
-        <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-white">
-          {p.name}
-        </span>
-        {sentOff ? (
-          <span className="flex-none text-[13px]">{suspended ? "🚫" : "🟥"}</span>
-        ) : (
-          <>
-            {yellows > 0 ? <span className="flex-none text-[12px]">🟨</span> : null}
-            {goals > 0 ? (
-              <span className="num flex-none text-[12px] font-bold" style={{ color: "var(--gold)" }}>
-                ⚽{goals}
-              </span>
-            ) : null}
-          </>
-        )}
-      </button>
-    );
-  }
+}
 
-  function TimelineRow({ e }: { e: MatchEvent }) {
-    const [confirming, setConfirming] = useState(false);
-    const meta = PRIMARY_EVENTS.concat(MORE_EVENTS).find((x) => x.type === e.type);
-    const pName = seed.players.find((p) => p.id === e.playerId)?.name;
-    return (
-      <div className="flex items-center gap-2 border-b py-2" style={{ borderColor: "var(--border-softer)" }}>
-        <span className="num w-9 text-center font-display text-[13px] font-bold" style={{ color: "var(--text-2)" }}>
-          د {e.minute}
-        </span>
-        <span className="text-[15px]">{meta?.icon ?? "•"}</span>
-        <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-white" style={e.deleted ? { textDecoration: "line-through", opacity: 0.5 } : undefined}>
-          {meta?.label}
-          {e.value > 1 ? " ×2" : ""} — {pName ?? store.teamByCode(e.teamCode)?.name}
-          {e.note ? ` · ${e.note}` : ""}
-        </span>
-        {!e.deleted ? (
-          confirming ? (
-            <span className="flex flex-wrap justify-end gap-1">
-              {DELETE_REASONS.map((r) => (
-                <button
-                  key={r}
-                  onClick={() => {
-                    store.deleteEventWithReason(e.id, r);
-                    setConfirming(false);
-                  }}
-                  className="pill px-2 py-1 text-[11.5px] font-semibold"
-                  style={{ background: "rgba(229,72,77,.14)", color: "var(--live)" }}
-                >
-                  {r}
-                </button>
-              ))}
+// المكونات على مستوى الملف عمدًا: تعريفها داخل الصفحة كان يعيد إنشاء نوعها
+// مع كل تحديث للساعة (كل 500ms) فتُعاد الشجرة بالكامل وتضيع حالة «حذف بسبب»
+
+function PlayerChip({
+  p,
+  onTap,
+  highlight,
+  matchId,
+}: {
+  p: Player;
+  onTap: () => void;
+  highlight: boolean;
+  matchId: string;
+}) {
+  const store = useLeague();
+  const { state } = store;
+  const playerEvents = state.events.filter(
+    (e) => e.matchId === matchId && e.playerId === p.id && !e.deleted,
+  );
+  const goals = playerEvents
+    .filter((e) => e.type === "goal")
+    .reduce((s, e) => s + e.value, 0);
+  const yellows = playerEvents.filter((e) => e.type === "yellow").length;
+  const suspended = store.isSuspended(p.id, matchId);
+  const sentOff = playerEvents.some((e) => e.type === "red") || suspended;
+  return (
+    <button
+      onClick={onTap}
+      disabled={sentOff}
+      className="flex h-12 flex-none items-center gap-2 rounded-[12px] px-2 text-start"
+      style={{
+        background: "linear-gradient(135deg,var(--surface-1),var(--surface-2))",
+        border: highlight ? "1.5px solid rgba(224,178,74,.55)" : "1px solid var(--border-soft)",
+        opacity: sentOff ? 0.45 : 1,
+      }}
+    >
+      <span
+        className="num flex h-[30px] w-[30px] flex-none items-center justify-center rounded-[9px] font-display text-[15px] font-bold"
+        style={{ background: "rgba(43,79,194,.3)", color: "var(--text-1)" }}
+      >
+        {p.shirt}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-white">
+        {p.name}
+      </span>
+      {sentOff ? (
+        <span className="flex-none text-[13px]">{suspended ? "🚫" : "🟥"}</span>
+      ) : (
+        <>
+          {yellows > 0 ? <span className="flex-none text-[12px]">🟨</span> : null}
+          {goals > 0 ? (
+            <span className="num flex-none text-[12px] font-bold" style={{ color: "var(--gold)" }}>
+              ⚽{goals}
             </span>
-          ) : (
-            <button onClick={() => setConfirming(true)} className="pill px-2.5 py-1 text-[12px] font-semibold" style={{ background: "rgba(255,255,255,.06)", color: "var(--text-3)" }}>
-              حذف بسبب
+          ) : null}
+        </>
+      )}
+    </button>
+  );
+}
+
+function TimelineRow({ e }: { e: MatchEvent }) {
+  const store = useLeague();
+  const { seed } = store;
+  const [confirming, setConfirming] = useState(false);
+  const meta = PRIMARY_EVENTS.concat(MORE_EVENTS).find((x) => x.type === e.type);
+  const pName = seed.players.find((p) => p.id === e.playerId)?.name;
+  return (
+    <div className="flex items-center gap-2 border-b py-2" style={{ borderColor: "var(--border-softer)" }}>
+      <span className="num w-9 text-center font-display text-[13px] font-bold" style={{ color: "var(--text-2)" }}>
+        د {e.minute}
+      </span>
+      <span className="text-[15px]">{meta?.icon ?? "•"}</span>
+      <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-white" style={e.deleted ? { textDecoration: "line-through", opacity: 0.5 } : undefined}>
+        {meta?.label}
+        {e.value > 1 ? " ×2" : ""} — {pName ?? store.teamByCode(e.teamCode)?.name}
+        {e.note ? ` · ${e.note}` : ""}
+      </span>
+      {!e.deleted ? (
+        confirming ? (
+          <span className="flex flex-wrap justify-end gap-1">
+            {DELETE_REASONS.map((r) => (
+              <button
+                key={r}
+                onClick={() => {
+                  store.deleteEventWithReason(e.id, r);
+                  setConfirming(false);
+                }}
+                className="pill px-2 py-1 text-[11.5px] font-semibold"
+                style={{ background: "rgba(229,72,77,.14)", color: "var(--live)" }}
+              >
+                {r}
+              </button>
+            ))}
+            <button
+              onClick={() => setConfirming(false)}
+              className="pill px-2 py-1 text-[11.5px] font-semibold"
+              style={{ background: "rgba(255,255,255,.08)", color: "var(--text-2)" }}
+            >
+              تراجع
             </button>
-          )
-        ) : (
-          <span className="text-[11.5px]" style={{ color: "var(--text-3)" }}>
-            {e.deletedReason}
           </span>
-        )}
-      </div>
-    );
-  }
+        ) : (
+          <button onClick={() => setConfirming(true)} className="pill px-2.5 py-1 text-[12px] font-semibold" style={{ background: "rgba(255,255,255,.06)", color: "var(--text-3)" }}>
+            حذف بسبب
+          </button>
+        )
+      ) : (
+        <span className="text-[11.5px]" style={{ color: "var(--text-3)" }}>
+          {e.deletedReason}
+        </span>
+      )}
+    </div>
+  );
 }
 
 /** اختيار التشكيلة الأساسية (5 لاعبين) لكل فريق قبل صافرة البداية */
