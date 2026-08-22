@@ -1,20 +1,34 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-// بوابة الكتابة الوحيدة للمرحلة 0 — RLS مقفول للكتابة من العملاء، وهذه الدالة
-// تعمل بمفتاح service_role بعد تحقق PIN، ولا تسمح إلا بأفعال محددة
-// بأعمدة محددة (لا كتابة حرة على أي جدول). تُستبدل بصلاحيات Auth الحقيقية
-// في مهمة المصادقة. verify_jwt معطل لأن المصادقة هنا مخصصة (PIN).
+// بوابة الكتابة الوحيدة — RLS مقفول للكتابة من العملاء، وهذه الدالة تعمل
+// بمفتاح service_role بعد التحقق من هوية المستخدم (JWT) ودوره في الدوري،
+// ولا تسمح إلا بأفعال محددة بأعمدة محددة (لا كتابة حرة على أي جدول).
+//
+// verify_jwt معطّل على مستوى المنصة عمدًا: أفعال الجمهور (نشر/إعجاب/توقع)
+// تعمل بلا حساب، والتحقق يتم داخل الدالة لكل فعل حسب ما يتطلبه.
 //
 // كل الإدراجات upsert بمعرّف من العميل (ignoreDuplicates): طابور الكتابة
 // قد يعيد إرسال طلب نجح ولم تصل استجابته، فلا يجوز أن يكرر أو يفشل.
-
-const PIN = Deno.env.get("LIVE_PIN") ?? "1234";
 
 const admin = createClient(
   Deno.env.get("SUPABASE_URL")!,
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
+
+/** أدوار الدوري لحامل هذا التوكن (فارغة = زائر أو توكن غير صالح) */
+async function rolesOf(authHeader: string | null): Promise<string[]> {
+  const token = authHeader?.replace(/^Bearer\s+/i, "");
+  if (!token) return [];
+  const { data, error } = await admin.auth.getUser(token);
+  if (error || !data.user) return [];
+  const { data: rows } = await admin
+    .from("league_members")
+    .select("roles")
+    .eq("user_id", data.user.id)
+    .eq("status", "active");
+  return (rows ?? []).flatMap((r) => r.roles as string[]);
+}
 
 const CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -82,17 +96,38 @@ Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
 
-  let body: { pin?: string; action?: string; payload?: Record<string, unknown> };
+  let body: { action?: string; payload?: Record<string, unknown> };
   try {
     body = await req.json();
   } catch {
     return json({ error: "bad_json" }, 400);
   }
-  // أفعال الجمهور (نشر/إعجاب/توقع) لا تحتاج PIN — الباقي (كل ما يمس نتيجة
-  // مباراة أو ترتيبًا) يحتاجه. الحقول والأطوال مقيدة في كل الحالات.
+
+  const action = String(body.action);
+  // أفعال الجمهور تعمل بلا حساب. تسجيل الأحداث والتشكيلات للطاقم المُسنَد،
+  // والاعتماد وإعادة الفتح وتعديل النقاط وتغيير المواعيد للأدمن/الحكم فقط.
   const PUBLIC_ACTIONS = ["insert_post", "like_post", "upsert_prediction"];
-  if (!PUBLIC_ACTIONS.includes(String(body.action)) && body.pin !== PIN) {
-    return json({ error: "bad_pin" }, 403);
+  const ADMIN_ACTIONS = ["insert_adjustment"];
+  const STAFF_ROLES = ["admin", "referee", "recorder"];
+
+  if (!PUBLIC_ACTIONS.includes(action)) {
+    const roles = await rolesOf(req.headers.get("Authorization"));
+    const needed = ADMIN_ACTIONS.includes(action)
+      ? ["admin"]
+      : action === "approve_match"
+        ? ["admin", "referee"]
+        : STAFF_ROLES;
+    if (!roles.some((r) => needed.includes(r))) {
+      return json({ error: "forbidden", needed }, 403);
+    }
+    // الاعتماد النهائي حكر على الحكم أو الأدمن (لا المسجّل)
+    if (
+      action === "update_match" &&
+      (body.payload as { patch?: Record<string, unknown> })?.patch?.status === "approved" &&
+      !roles.some((r) => r === "admin" || r === "referee")
+    ) {
+      return json({ error: "approval_needs_referee" }, 403);
+    }
   }
 
   // deno-lint-ignore no-explicit-any

@@ -426,18 +426,6 @@ export async function fetchRemote(): Promise<RemoteSnapshot> {
 
 // ————— الكتابة عبر بوابة live-write —————
 
-const PIN_KEY = "halaqat-live-pin";
-
-/** رقم الكتابة السري — قابل للتغيير من localStorage عند تشديد LIVE_PIN لاحقًا */
-export function livePin(): string {
-  if (typeof window === "undefined") return "1234";
-  try {
-    return window.localStorage.getItem(PIN_KEY) ?? "1234";
-  } catch {
-    return "1234";
-  }
-}
-
 /** إرسال عبر الطابور — لا يضيع شيء لو انقطعت الشبكة أثناء المباراة */
 export function queueWrite(action: string, payload: unknown): void {
   enqueueWrite(action, payload);
@@ -449,11 +437,18 @@ export function queueWrite(action: string, payload: unknown): void {
  */
 export async function liveWrite(action: string, payload: unknown): Promise<WriteResult> {
   let res: Response;
+  // توكن الجلسة يحدد الصلاحية في البوابة — الزائر بلا توكن يكتب الأفعال العامة فقط
+  const { data: session } = await supabase.auth.getSession();
+  const token = session.session?.access_token;
   try {
     res = await fetch(`${SUPABASE_URL}/functions/v1/live-write`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", apikey: SUPABASE_KEY },
-      body: JSON.stringify({ pin: livePin(), action, payload }),
+      headers: {
+        "Content-Type": "application/json",
+        apikey: SUPABASE_KEY,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ action, payload }),
     });
   } catch (e) {
     // فشل شبكة/DNS/انقطاع — لم يصل الطلب أصلًا

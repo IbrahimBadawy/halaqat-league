@@ -26,7 +26,7 @@ import {
   type ScheduleConflict,
 } from "../scheduling/conflicts";
 import { computeTeamSuspensions } from "../discipline/suspensions";
-import { supabase } from "../supabase/client";
+import { supabase, usernameToEmail } from "../supabase/client";
 import {
   deviceKey,
   emptyLive,
@@ -81,17 +81,25 @@ export interface PersistedState {
   starters: Record<string, Record<string, string[]>>;
 }
 
-/** ما يبقى خاصًا بالجهاز: الدور فقط (التوقعات والمنشورات صارت في القاعدة) */
-interface LocalState {
-  role: Role;
+/** هوية المستخدم الحالي — تأتي من الحساب لا من مبدّل محلي */
+export interface SessionUser {
+  id: string;
+  username: string;
+  displayName: string;
+  /** أدوار الدوري الخام: admin / moderator / referee / recorder */
+  roles: string[];
+  isPlatformAdmin: boolean;
 }
 
-const LOCAL_KEY = "halaqat-league-local-v1";
 const LEGACY_KEY = "halaqat-league-v1";
-const ADMIN_PIN = "1234";
+const LEGACY_LOCAL_KEY = "halaqat-league-local-v1";
 
-function initialLocal(): LocalState {
-  return { role: "visitor" };
+/** الدور الوظيفي في الواجهة مشتق من أدوار الحساب */
+function roleOf(user: SessionUser | null): Role {
+  if (!user) return "visitor";
+  if (user.roles.includes("admin")) return "admin";
+  if (user.roles.some((r) => r === "referee" || r === "recorder")) return "recorder";
+  return "visitor";
 }
 
 function freshClock(): ClockState {
@@ -157,8 +165,14 @@ export interface LeagueStore {
   suspensions: Suspension[];
   isSuspended: (playerId: string, matchId: string) => boolean;
 
+  /** المستخدم الحالي — null = زائر (الدخول الافتراضي بلا حساب) */
+  user: SessionUser | null;
+  /** هل الحساب الحالي حكم أو أدمن؟ (الاعتماد النهائي حكر عليهما) */
+  canApprove: boolean;
+  signIn: (username: string, password: string) => Promise<string | null>;
+  signOut: () => Promise<void>;
+
   // أفعال
-  setRole: (role: Role) => void;
   rescheduleMatch: (matchId: string, patch: FixtureOverride, reason: string) => void;
   setPrediction: (matchId: string, p: Prediction) => void;
   addPost: (author: string, text: string) => void;
@@ -193,7 +207,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
   const bundledSeed = useMemo(() => loadSeed(), []);
   const [seed, setSeed] = useState<LeagueSeed>(bundledSeed);
   const [live, setLive] = useState<RemoteLive>(emptyLive);
-  const [local, setLocal] = useState<LocalState>(initialLocal);
+  const [user, setUser] = useState<SessionUser | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const [connected, setConnected] = useState(false);
   const [pending, setPending] = useState(0);
@@ -203,10 +217,9 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
   liveRef.current = live;
   const seedRef = useRef(seed);
   seedRef.current = seed;
-  const localRef = useRef(local);
-  localRef.current = local;
+  const userRef = useRef(user);
+  userRef.current = user;
   const idsRef = useRef<RemoteIds | null>(null);
-  const localLoaded = useRef(false);
 
   const applySnapshot = useCallback(
     (s: { seed: LeagueSeed; live: RemoteLive; ids: RemoteIds }) => {
@@ -230,24 +243,15 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // تحميل الدور المحفوظ على الجهاز ثم الجلب الأول من القاعدة
+  // الجلب الأول من القاعدة (الزائر يرى كل شيء بلا حساب)
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(LOCAL_KEY);
-      if (raw) {
-        setLocal((s) => ({ ...s, ...(JSON.parse(raw) as Partial<LocalState>) }));
-      } else {
-        // ترحيل الدور من مخزن المرحلة المحلية القديم
-        const legacy = localStorage.getItem(LEGACY_KEY);
-        if (legacy) {
-          const p = JSON.parse(legacy) as Partial<PersistedState>;
-          if (p.role) setLocal((s) => ({ ...s, role: p.role! }));
-        }
-      }
+      // مبدّل الدور المحلي القديم لم يعد له معنى بعد الحسابات الحقيقية
+      localStorage.removeItem(LEGACY_KEY);
+      localStorage.removeItem(LEGACY_LOCAL_KEY);
     } catch {
-      // بيانات تالفة — نتجاهل
+      // لا شيء
     }
-    localLoaded.current = true;
 
     let cancelled = false;
     (async () => {
@@ -268,14 +272,39 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // متابعة جلسة المصادقة: الدور يُشتق من الحساب، وانتهاء الجلسة يعيدنا زائرًا
   useEffect(() => {
-    if (!localLoaded.current) return;
-    try {
-      localStorage.setItem(LOCAL_KEY, JSON.stringify(local));
-    } catch {
-      // التخزين ممتلئ — نتجاهل
-    }
-  }, [local]);
+    let cancelled = false;
+
+    const loadUser = async (uid: string | undefined) => {
+      if (!uid) {
+        if (!cancelled) setUser(null);
+        return;
+      }
+      const [profileQ, memberQ] = await Promise.all([
+        supabase.from("profiles").select("username, display_name, is_platform_admin").eq("id", uid).maybeSingle(),
+        supabase.from("league_members").select("roles").eq("user_id", uid).eq("status", "active"),
+      ]);
+      if (cancelled) return;
+      const p = profileQ.data;
+      setUser({
+        id: uid,
+        username: p?.username ?? "",
+        displayName: p?.display_name ?? p?.username ?? "",
+        roles: (memberQ.data ?? []).flatMap((r) => r.roles as string[]),
+        isPlatformAdmin: p?.is_platform_admin ?? false,
+      });
+    };
+
+    void supabase.auth.getSession().then(({ data }) => loadUser(data.session?.user.id));
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+      void loadUser(session?.user.id);
+    });
+    return () => {
+      cancelled = true;
+      sub.subscription.unsubscribe();
+    };
+  }, []);
 
   // التحديث الحي: أي تغيير في الجداول الحية يعيد الجلب (مع دمج التغييرات المتقاربة)
   useEffect(() => {
@@ -354,7 +383,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
 
   const state: PersistedState = useMemo(
     () => ({
-      role: local.role,
+      role: roleOf(user),
       statuses: live.statuses,
       events: live.events,
       clocks: live.clocks,
@@ -369,7 +398,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
       posts: live.posts,
       starters: live.starters,
     }),
-    [local, live, lineupOverrides, activeCards, usedCards],
+    [user, live, lineupOverrides, activeCards, usedCards],
   );
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -615,7 +644,8 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     const entry: AuditEntry = {
       id: eventUuid(),
       at: Date.now(),
-      actor: localRef.current.role,
+      // اسم الفاعل الحقيقي في التدقيق بدل الدور المجرد
+      actor: userRef.current?.displayName ?? userRef.current?.username ?? "زائر",
       action,
       entity,
       detail,
@@ -724,10 +754,22 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
 
   // ————— الأفعال —————
 
-  const setRole = useCallback(
-    (role: Role) => setLocal((s) => ({ ...s, role })),
-    [],
-  );
+  /** تسجيل الدخول باسم مستخدم — يُرجع نص الخطأ أو null عند النجاح */
+  const signIn = useCallback(async (username: string, password: string) => {
+    const { error } = await supabase.auth.signInWithPassword({
+      email: usernameToEmail(username),
+      password,
+    });
+    if (!error) return null;
+    return error.message.toLowerCase().includes("invalid")
+      ? "اسم المستخدم أو كلمة المرور غير صحيحة"
+      : `تعذّر تسجيل الدخول: ${error.message}`;
+  }, []);
+
+  const signOut = useCallback(async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+  }, []);
 
   const rescheduleMatch = useCallback(
     (matchId: string, patch: FixtureOverride, reason: string) => {
@@ -1073,8 +1115,10 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
   );
 
   const approveMatch = useCallback(
-    (matchId: string, pin: string): boolean => {
-      if (pin !== ADMIN_PIN) return false;
+    (matchId: string, _pin: string): boolean => {
+      // الصلاحية صارت من الحساب لا من رقم سري — والبوابة تتحقق منها ثانيةً
+      const roles = userRef.current?.roles ?? [];
+      if (!roles.some((r) => r === "admin" || r === "referee")) return false;
       const now = Date.now();
       setLive((l) => ({
         ...l,
@@ -1189,14 +1233,9 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const resetAll = useCallback(() => {
-    // القاعدة مشتركة — لا نمسحها من جهاز؛ نعيد ضبط ما يخص هذا الجهاز فقط
-    setLocal(initialLocal());
-    try {
-      localStorage.removeItem(LEGACY_KEY);
-    } catch {
-      // لا شيء
-    }
-  }, []);
+    // القاعدة مشتركة — لا نمسحها من جهاز؛ الخروج يعيد الجهاز زائرًا
+    void signOut();
+  }, [signOut]);
 
   const store: LeagueStore = {
     seed,
@@ -1212,6 +1251,10 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     suggestReschedule,
     suspensions,
     isSuspended,
+    user,
+    canApprove: (user?.roles ?? []).some((r) => r === "admin" || r === "referee"),
+    signIn,
+    signOut,
     rescheduleMatch,
     setPrediction,
     addPost,
@@ -1229,7 +1272,6 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     resolveSide: resolveSideRaw,
     onFieldPlayers,
     benchPlayers,
-    setRole,
     startMatch,
     toggleClock,
     advancePeriod,

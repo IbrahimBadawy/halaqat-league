@@ -9,6 +9,12 @@ export const SUPABASE_KEY =
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
   "sb_publishable_zUAJAL_sXvfOp53PJ3YVdQ_AJ_gznWm";
 
+// الجلسة تُحفظ وتُجدَّد: الطاقم يسجل دخوله مرة ويظل داخلًا طوال ليلة المباريات
 export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_KEY, {
-  auth: { persistSession: false },
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
 });
+
+/** اسم المستخدم يُربط ببريد داخلي صوري — لا بريد حقيقي في المنصة (المواصفة §8) */
+export function usernameToEmail(username: string): string {
+  return `${username.trim().toLowerCase()}@halaqat.local`;
+}

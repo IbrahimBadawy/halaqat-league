@@ -838,6 +838,7 @@ export type Database = {
           created_at: string
           display_name: string
           id: string
+          is_platform_admin: boolean
           position: string | null
           username: string
         }
@@ -846,6 +847,7 @@ export type Database = {
           created_at?: string
           display_name: string
           id: string
+          is_platform_admin?: boolean
           position?: string | null
           username: string
         }
@@ -854,6 +856,7 @@ export type Database = {
           created_at?: string
           display_name?: string
           id?: string
+          is_platform_admin?: boolean
           position?: string | null
           username?: string
         }

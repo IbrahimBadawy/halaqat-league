@@ -88,11 +88,21 @@
   قراءة عامة) ويحوّلها لنفس أشكال `LeagueSeed`/`PersistedState` بمفاتيح
   الأكواد (m1..، A1..، A1-4). الـ seed المدمج (JSON) يبقى fallback فوريًا
   عند انقطاع الشبكة، وأكواد generateStaticParams تُعدَّد منه.
+- **المصادقة (مكتملة)**: Supabase Auth، اسم المستخدم ← بريد داخلي
+  `<username>@halaqat.local` (`usernameToEmail` في `lib/supabase/client.ts`).
+  **الزائر هو الوضع الافتراضي بلا تسجيل دخول** ويرى كل شيء؛ الدخول للطاقم فقط
+  من `/me`. الدور يُشتق من `league_members.roles`
+  (admin ← دور «أدمن»، referee/recorder ← دور «مسجّل»، لا شيء ← زائر)
+  ولم يعد هناك مبدّل أدوار محلي. الجلسة محفوظة ومجدَّدة تلقائيًا.
 - **الكتابة**: حصريًا عبر Edge Function `live-write` (service-role داخليًا،
-  تحقق PIN، أفعال محددة بأعمدة whitelisted — لا كتابة أنون مباشرة على
-  الجداول). PIN الافتراضي 1234 (secret `LIVE_PIN` في الدالة؛ العميل يقرؤه
-  من localStorage مفتاح `halaqat-live-pin`). التحديث المتفائل محليًا +
-  إرسال غير متزامن.
+  أفعال محددة بأعمدة whitelisted — لا كتابة أنون مباشرة على الجداول).
+  التحقق داخل الدالة عبر JWT + أدوار الدوري (تم إلغاء PIN نهائيًا):
+  - أفعال الجمهور (`insert_post` / `like_post` / `upsert_prediction`) بلا حساب.
+  - تسجيل الأحداث/الساعة/التشكيلات: admin أو referee أو recorder.
+  - `insert_adjustment` (تعديل النقاط): admin فقط.
+  - `status = "approved"` (اعتماد النتيجة): admin أو referee فقط — **لا المسجّل**.
+  مُختبَر فعليًا على القاعدة: زائر ← forbidden، مسجّل يبدأ ✓ لكن اعتماده
+  مرفوض، حكم يعتمد ✓، تعديل نقاط من مسجّل مرفوض.
 - **Realtime**: قناة واحدة على 7 جداول حية → إعادة جلب مدمجة (350ms debounce).
   ساعة المباراة في `matches.clock` (jsonb) فتتزامن بين الأجهزة.
 - **المشتقات**: `lineupOverrides` صارت تُشتق من أحداث التبديل (التراجع يصحح
@@ -126,11 +136,23 @@
   **https://ibrahimbadawy.github.io/halaqat-league/** — الريبو صار public
   (شرط GitHub Pages المجاني).
 
+## حسابات الدوري (أُنشئت 2026-08-22)
+
+6 حسابات في `auth.users` + صفوف في `league_members`:
+`admin` (admin+moderator+referee+recorder، `is_platform_admin=true`) ·
+`hakam1` و`hakam2` (referee) · `mosgel1` و`mosgel2` و`mosgel3` (recorder).
+كلمات المرور سُلّمت للمالك مباشرة ولا تُحفظ في الريبو.
+دالة التجهيز `setup-accounts` أُقفلت بعد الاستخدام (ترجع 410).
+**لإضافة حساب**: لوحة Supabase ← Authentication ← Add user (بريد
+`<username>@halaqat.local`، Auto Confirm)، ثم صف في `league_members`
+بالأدوار. الملف الشخصي يُنشأ تلقائيًا بـ trigger `on_auth_user_created`.
+
 ### المتبقي للمراحل التالية
 
-- Auth حقيقي (username → بريد داخلي) + league_members ثم إزالة بوابة PIN
-  وتشديد سياسات الكتابة على الأدوار، وتغيير `LIVE_PIN` من لوحة Supabase.
 - الإشراف على المجتمع (حذف/حظر/كلمات ممنوعة) — المنشورات الآن عامة بلا فلترة.
+- إسناد الطاقم لكل مباراة (`match_officials`) وتضييق الكتابة على المسجّل
+  المُسنَد لتلك المباراة تحديدًا بدل أي مسجّل.
+- تغيير كلمة المرور من داخل التطبيق (حاليًا من لوحة Supabase فقط).
 - Push notifications، وصور المشاركة المولدة (@vercel/og)، ومولد الجدولة T1.
 - تحذير advisor الوحيد المتبقي مقصود: `has_league_role` لازم تبقى قابلة
   للتنفيذ من `authenticated` لأن سياسات RLS تستدعيها (تُرجع صلاحية المستدعي

@@ -982,41 +982,38 @@ function EndSheet({
             })}
           </div>
 
-          <div className="mb-2 text-[13.5px] font-bold text-white">اعتماد الحكم — الرقم السري</div>
+          <div className="mb-2 text-[13.5px] font-bold text-white">
+            {store.canApprove ? "اعتماد النتيجة النهائية" : "الاعتماد النهائي"}
+          </div>
+          {!store.canApprove ? (
+            <p
+              className="mb-2 rounded-[12px] px-3.5 py-3 text-[13px] font-semibold"
+              style={{ background: "rgba(244,196,48,.1)", border: "1px solid rgba(244,196,48,.4)", color: "var(--warn)" }}
+            >
+              الاعتماد من صلاحية الحكم أو أدمن الدوري — سجّل دخولك بحسابك من
+              صفحة «أنا»، أو سلّم الجهاز للحكم لاعتماد النتيجة.
+            </p>
+          ) : null}
           <div className="mb-2 flex gap-2">
-            <input
-              value={pin}
-              onChange={(e) => {
-                setPin(e.target.value);
-                setPinError(false);
-              }}
-              inputMode="numeric"
-              maxLength={4}
-              placeholder="****"
-              className="num h-12 flex-1 rounded-[12px] px-4 text-center text-[20px] font-bold tracking-[6px] text-white outline-none"
-              style={{
-                background: "rgba(255,255,255,.06)",
-                border: `1.5px solid ${pinError ? "var(--live)" : "var(--border-soft)"}`,
-              }}
-            />
             <button
+              disabled={!store.canApprove}
               onClick={() => {
                 const ok = store.approveMatch(matchId, pin);
                 if (!ok) setPinError(true);
                 else onClose();
               }}
-              className="btn-gold h-12 flex-none px-5 text-[15px]"
+              className="btn-gold h-12 w-full text-[15px] disabled:opacity-40"
             >
-              اعتماد وقفل
+              اعتماد وقفل النتيجة
             </button>
           </div>
           {pinError ? (
             <p className="text-[12.5px] font-semibold" style={{ color: "var(--live)" }}>
-              الرقم السري غير صحيح
+              تعذّر الاعتماد — حسابك لا يملك صلاحية الحكم
             </p>
           ) : (
             <p className="text-[12px]" style={{ color: "var(--text-3)" }}>
-              الاعتماد يقفل النتيجة ويحدّث الترتيب فورًا ويُسجَّل في التدقيق. (الرقم الافتراضي: 1234)
+              الاعتماد يقفل النتيجة ويحدّث الترتيب فورًا ويُسجَّل في التدقيق باسم صاحب الحساب.
             </p>
           )}
         </>
