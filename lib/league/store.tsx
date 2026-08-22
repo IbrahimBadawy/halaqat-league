@@ -175,7 +175,9 @@ export interface LeagueStore {
   minuteOf: (matchId: string) => number;
   teamByCode: (code: string) => Team | undefined;
   playersOf: (teamCode: string) => Player[];
-  standingsOf: (group: "A" | "B") => StandingRow[];
+  standingsOf: (group: string) => StandingRow[];
+  /** حروف مجموعات الدوري النشط بالترتيب (A, B, ...) */
+  groupNames: string[];
   groupsComplete: boolean;
   /** حل رموز الإقصائيات (1A، W_semi_1...) إلى فريق فعلي أو تسمية عرض */
   resolveSide: (raw: string) => { team?: Team; label: string };
@@ -235,10 +237,18 @@ export interface LeagueStore {
   requestJoin: (code: string) => Promise<string | null>;
   decideJoin: (requestId: string, approve: boolean) => Promise<string | null>;
 
+  /** الدوري النشط مقفول (مؤرشف): لا تسجيل أحداث ولا انضمام */
+  leagueLocked: boolean;
+
   // إدارة الأدمن
   profilesAll: ProfileInfo[];
   memberRoles: Record<string, string[]>;
   setCaptain: (teamCode: string, userId: string | null) => Promise<string | null>;
+  /** تعديل صلاحيات مستخدم في الدوري النشط (فارغة = إزالة العضوية) */
+  adminSetRoles: (userId: string, roles: string[]) => Promise<string | null>;
+  adminDeleteAccount: (userId: string) => Promise<string | null>;
+  /** قفل (archived) أو فتح (active) دوري */
+  setLeagueStatus: (leagueId: string, status: "active" | "archived") => Promise<string | null>;
   adminCreateAccount: (
     username: string,
     password: string,
@@ -584,7 +594,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
   );
 
   const standingsOf = useCallback(
-    (group: "A" | "B"): StandingRow[] =>
+    (group: string): StandingRow[] =>
       computeStandings({
         teams: seed.teams.filter((t) => t.group === group),
         matches: approvedGroupMatches,
@@ -639,9 +649,9 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
         L_semi_1: "خاسر نصف النهائي 1",
         L_semi_2: "خاسر نصف النهائي 2",
       };
-      if (/^[12][AB]$/.test(raw) && groupsComplete) {
+      if (/^[1-9][A-D]$/.test(raw) && groupsComplete) {
         const rank = Number(raw[0]);
-        const group = raw[1] as "A" | "B";
+        const group = raw[1];
         const row = standingsOf(group)[rank - 1];
         const team = row ? teamByCode(row.teamCode) : undefined;
         if (team) return { team, label: team.name };
@@ -1003,6 +1013,42 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
         new_password: newPassword,
       });
       if (!res.ok) return res.error ?? "تعذّرت إعادة التعيين";
+      return null;
+    },
+    [],
+  );
+
+  const adminSetRoles = useCallback(
+    async (userId: string, roles: string[]): Promise<string | null> => {
+      const leagueId = idsRef.current?.leagueId;
+      if (!leagueId) return "لا دوري نشطًا";
+      const res = await liveCall("set_member_roles", {
+        user_id: userId,
+        league_id: leagueId,
+        roles,
+      });
+      if (!res.ok) return res.error ?? "تعذّر التعديل";
+      await refresh();
+      return null;
+    },
+    [refresh],
+  );
+
+  const adminDeleteAccount = useCallback(
+    async (userId: string): Promise<string | null> => {
+      const res = await accountsCall("delete_account", { user_id: userId });
+      if (!res.ok) return res.error ?? "تعذّر الحذف";
+      await refresh();
+      return null;
+    },
+    [refresh],
+  );
+
+  const setLeagueStatus = useCallback(
+    async (leagueId: string, status: "active" | "archived"): Promise<string | null> => {
+      const res = await liveCall("set_league_status", { league_id: leagueId, status });
+      if (!res.ok) return res.error ?? "تعذّر التغيير";
+      setLeagues(await fetchLeagues().catch(() => []));
       return null;
     },
     [],
@@ -1491,6 +1537,12 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
         .filter(([, uid]) => uid === user.id)
         .map(([code]) => code)
     : [];
+  const groupNames = useMemo(
+    () => [...new Set(seed.teams.map((t) => t.group))].sort(),
+    [seed],
+  );
+  const leagueLocked =
+    leagues.find((l) => l.id === activeLeagueId)?.status === "archived";
 
   const store: LeagueStore = {
     seed,
@@ -1507,6 +1559,8 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     refresh,
     myTeamCode,
     captainOf,
+    groupNames,
+    leagueLocked,
     joinRequests: live.joinRequests,
     joinCodes: live.joinCodes,
     captains: live.captains,
@@ -1515,6 +1569,9 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     profilesAll: live.profiles,
     memberRoles: live.members,
     setCaptain,
+    adminSetRoles,
+    adminDeleteAccount,
+    setLeagueStatus,
     adminCreateAccount,
     adminResetPassword,
     adminCreateLeague,

@@ -25,7 +25,7 @@ function groupBySlot(night: Match[]): { slot: string; items: Match[] }[] {
 }
 
 export default function PosterPage() {
-  const { seed, matches, hydrated, resolveSide } = useLeague();
+  const { seed, matches, hydrated, resolveSide, groupNames } = useLeague();
 
   if (!hydrated) return null;
 
@@ -236,9 +236,9 @@ export default function PosterPage() {
         })}
       </div>
 
-      {/* ————— لوحتا المجموعتين جنبًا إلى جنب ————— */}
+      {/* ————— لوحات المجموعات جنبًا إلى جنب ————— */}
       <div className="grid grid-cols-2 gap-2.5">
-        {(["A", "B"] as const).map((g) => (
+        {groupNames.map((g) => (
           <div key={g} className="card overflow-hidden">
             <div
               className="px-2 py-1.5 text-center font-display text-[13.5px] font-bold text-white"

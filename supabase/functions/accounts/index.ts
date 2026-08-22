@@ -32,18 +32,20 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const STAFF_ROLES = ["admin", "moderator", "referee", "recorder"];
 
-/** هل حامل التوكن أدمن (منصة أو دوري)؟ */
-async function isAdmin(authHeader: string | null): Promise<boolean> {
+/** معرّف حامل التوكن لو كان أدمن (منصة أو دوري) — null لغير المخوَّل */
+async function adminCaller(authHeader: string | null): Promise<string | null> {
   const token = authHeader?.replace(/^Bearer\s+/i, "");
-  if (!token) return false;
+  if (!token) return null;
   const { data, error } = await admin.auth.getUser(token);
-  if (error || !data.user) return false;
+  if (error || !data.user) return null;
   const [profileQ, memberQ] = await Promise.all([
     admin.from("profiles").select("is_platform_admin").eq("id", data.user.id).maybeSingle(),
     admin.from("league_members").select("roles").eq("user_id", data.user.id).eq("status", "active"),
   ]);
-  if (profileQ.data?.is_platform_admin) return true;
-  return (memberQ.data ?? []).some((r) => (r.roles as string[]).includes("admin"));
+  const ok =
+    profileQ.data?.is_platform_admin === true ||
+    (memberQ.data ?? []).some((r) => (r.roles as string[]).includes("admin"));
+  return ok ? data.user.id : null;
 }
 
 async function createAccount(opts: {
@@ -118,7 +120,7 @@ Deno.serve(async (req: Request) => {
       }
 
       case "create_account": {
-        if (!(await isAdmin(req.headers.get("Authorization")))) {
+        if (!(await adminCaller(req.headers.get("Authorization")))) {
           return json({ error: "forbidden" }, 403);
         }
         const roles = (Array.isArray(body.roles) ? body.roles : [])
@@ -144,7 +146,7 @@ Deno.serve(async (req: Request) => {
       }
 
       case "reset_password": {
-        if (!(await isAdmin(req.headers.get("Authorization")))) {
+        if (!(await adminCaller(req.headers.get("Authorization")))) {
           return json({ error: "forbidden" }, 403);
         }
         if (!UUID_RE.test(String(body.user_id))) return json({ error: "bad_id" }, 400);
@@ -158,6 +160,27 @@ Deno.serve(async (req: Request) => {
         await admin.from("profiles")
           .update({ must_change_password: true })
           .eq("id", body.user_id);
+        return json({ ok: true });
+      }
+
+      case "delete_account": {
+        const caller = await adminCaller(req.headers.get("Authorization"));
+        if (!caller) return json({ error: "forbidden" }, 403);
+        const uid = String(body.user_id);
+        if (!UUID_RE.test(uid)) return json({ error: "bad_id" }, 400);
+        if (uid === caller) return json({ error: "لا يمكنك حذف حسابك وأنت داخل به" }, 400);
+        const { data: target } = await admin
+          .from("profiles").select("is_platform_admin, username").eq("id", uid).maybeSingle();
+        if (!target) return json({ error: "الحساب غير موجود" }, 404);
+        if (target.is_platform_admin) {
+          return json({ error: "حساب مدير المنصة لا يُحذف من هنا" }, 400);
+        }
+        // فك الارتباطات غير المتسلسلة قبل حذف حساب المصادقة (الملف يتسلسل معه)
+        await admin.from("players").update({ user_id: null }).eq("user_id", uid);
+        await admin.from("teams").update({ captain_id: null }).eq("captain_id", uid);
+        await admin.from("join_requests").update({ decided_by: null }).eq("decided_by", uid);
+        const { error } = await admin.auth.admin.deleteUser(uid);
+        if (error) return json({ error: error.message }, 500);
         return json({ ok: true });
       }
 

@@ -14,7 +14,7 @@ import { formatNight, formatSlot, STAGE_LABELS } from "@/lib/league/seed";
 import type { Match } from "@/lib/league/types";
 
 export default function TvPage() {
-  const { seed, matches, hydrated, statusOf } = useLeague();
+  const { seed, matches, hydrated, statusOf, groupNames } = useLeague();
 
   // إعادة رسم دورية — الدقيقة والنتيجة تتحدثان من المخزن مباشرة
   const [, tick] = useState(0);
@@ -133,9 +133,10 @@ export default function TvPage() {
           )}
         </section>
 
-        {/* جدولا الترتيب */}
-        <MiniTable group="A" />
-        <MiniTable group="B" />
+        {/* جداول الترتيب — مجموعة لكل بطاقة */}
+        {groupNames.map((g) => (
+          <MiniTable key={g} group={g} />
+        ))}
       </div>
     </div>
   );
@@ -337,7 +338,7 @@ function TonightRow({ m, parallel }: { m: Match; parallel: boolean }) {
 }
 
 /* ———————————————— جدول ترتيب مصغّر لمجموعة ———————————————— */
-function MiniTable({ group }: { group: "A" | "B" }) {
+function MiniTable({ group }: { group: string }) {
     const { seed, standingsOf, teamByCode } = useLeague();
     const rows = standingsOf(group);
     return (

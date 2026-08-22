@@ -5,12 +5,12 @@ import Shield from "@/components/ui/Shield";
 import { useLeague } from "@/lib/league/store";
 
 export default function TeamsPage() {
-  const { seed, hydrated } = useLeague();
+  const { seed, hydrated, groupNames } = useLeague();
   if (!hydrated) return null;
   return (
     <div className="px-4">
       <h1 className="pb-3 pt-4 font-display text-[22px] font-bold text-white">الفرق</h1>
-      {(["A", "B"] as const).map((g) => (
+      {groupNames.map((g) => (
         <div key={g} className="mb-4">
           <div className="mb-2 text-[13.5px] font-semibold" style={{ color: "var(--text-3)" }}>
             المجموعة {g}

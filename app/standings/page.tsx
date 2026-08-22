@@ -8,11 +8,13 @@ import { useLeague } from "@/lib/league/store";
 import { formatNight, formatSlot } from "@/lib/league/seed";
 
 export default function StandingsPage() {
-  const { standingsOf, teamByCode, seed, matches, hydrated, statusOf, scoreOf, resolveSide } = useLeague();
-  const [group, setGroup] = useState<"A" | "B">("A");
+  const { standingsOf, teamByCode, seed, matches, hydrated, statusOf, scoreOf, resolveSide, groupNames } = useLeague();
+  const [pickedGroup, setGroup] = useState<string | null>(null);
 
   if (!hydrated) return null;
 
+  // المجموعة الفعلية: المختارة إن كانت موجودة في الدوري النشط، وإلا الأولى
+  const group = pickedGroup && groupNames.includes(pickedGroup) ? pickedGroup : (groupNames[0] ?? "A");
   const rows = standingsOf(group);
   const knockouts = matches.filter((m) => m.stage !== "group");
 
@@ -21,7 +23,7 @@ export default function StandingsPage() {
       <div className="flex items-center gap-2 pb-2 pt-4">
         <h1 className="font-display text-[22px] font-bold text-white">الترتيب</h1>
         <span className="ms-auto flex gap-1.5">
-          {(["A", "B"] as const).map((g) => (
+          {groupNames.map((g) => (
             <button
               key={g}
               onClick={() => setGroup(g)}
@@ -105,33 +107,44 @@ export default function StandingsPage() {
       </div>
 
       <div className="flex flex-wrap gap-3 px-1 py-2.5 text-[12px] font-medium" style={{ color: "var(--text-3)" }}>
-        <span>
-          <span className="me-1.5 inline-block h-2 w-2 rounded-[2px]" style={{ background: "var(--green-text)" }} />
-          يتأهل لنصف النهائي
-        </span>
+        {knockouts.length > 0 ? (
+          <span>
+            <span className="me-1.5 inline-block h-2 w-2 rounded-[2px]" style={{ background: "var(--green-text)" }} />
+            يتأهل للإقصائيات
+          </span>
+        ) : (
+          <span>
+            <span className="me-1.5 inline-block h-2 w-2 rounded-[2px]" style={{ background: "var(--green-text)" }} />
+            مراكز الصدارة
+          </span>
+        )}
         <span style={{ color: "var(--warn)" }}>★ تعديل نقاط (كارت/عقوبة)</span>
       </div>
 
-      {/* شجرة الكأس — الليلة من الجدول الفعلي لا نصًّا يدويًا */}
-      <SectionTitle>
-        شجرة الكأس{knockouts.length > 0 ? ` — ${formatNight(knockouts[0].matchDay)}` : ""}
-      </SectionTitle>
-      <div className="flex flex-col gap-2 pb-5">
-        <div className="grid grid-cols-2 gap-2">
-          {knockouts
-            .filter((m) => m.stage === "semi_1" || m.stage === "semi_2")
-            .map((m) => (
-              <BracketCard key={m.id} matchId={m.id} title={m.stage === "semi_1" ? "نصف النهائي 1" : "نصف النهائي 2"} />
-            ))}
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          {knockouts
-            .filter((m) => m.stage === "third_place" || m.stage === "final")
-            .map((m) => (
-              <BracketCard key={m.id} matchId={m.id} title={m.stage === "final" ? "النهائي 🏆" : "المركز الثالث"} final={m.stage === "final"} />
-            ))}
-        </div>
-      </div>
+      {/* شجرة الكأس — تظهر فقط للدوريات التي فيها إقصائيات */}
+      {knockouts.length > 0 ? (
+        <>
+          <SectionTitle>شجرة الكأس — {formatNight(knockouts[0].matchDay)}</SectionTitle>
+          <div className="flex flex-col gap-2 pb-5">
+            <div className="grid grid-cols-2 gap-2">
+              {knockouts
+                .filter((m) => m.stage === "semi_1" || m.stage === "semi_2")
+                .map((m) => (
+                  <BracketCard key={m.id} matchId={m.id} title={m.stage === "semi_1" ? "نصف النهائي 1" : "نصف النهائي 2"} />
+                ))}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {knockouts
+                .filter((m) => m.stage === "third_place" || m.stage === "final")
+                .map((m) => (
+                  <BracketCard key={m.id} matchId={m.id} title={m.stage === "final" ? "النهائي 🏆" : "المركز الثالث"} final={m.stage === "final"} />
+                ))}
+            </div>
+          </div>
+        </>
+      ) : (
+        <div className="pb-5" />
+      )}
     </div>
   );
 

@@ -348,8 +348,8 @@ export default function HomePage() {
 }
 
 function MiniStandings() {
-  const { standingsOf, teamByCode, seed } = useLeague();
-  const groups: ("A" | "B")[] = ["A", "B"];
+  const { standingsOf, teamByCode, seed, groupNames } = useLeague();
+  const groups = groupNames;
   const anyPlayed = groups.some((g) => standingsOf(g).some((r) => r.played > 0));
   if (!anyPlayed) return null;
   return (

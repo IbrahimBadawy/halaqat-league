@@ -120,7 +120,10 @@ Deno.serve(async (req: Request) => {
   // الأدمن، وتعديل النقاط والكباتن وإنشاء الدوريات للأدمن فقط.
   const PUBLIC_ACTIONS = ["insert_post", "like_post", "upsert_prediction"];
   const USER_ACTIONS = ["request_join", "decide_join"];
-  const ADMIN_ACTIONS = ["insert_adjustment", "set_captain", "create_league"];
+  const ADMIN_ACTIONS = [
+    "insert_adjustment", "set_captain", "create_league",
+    "set_member_roles", "set_league_status",
+  ];
   const STAFF_ROLES = ["admin", "referee", "recorder"];
 
   let auth: { uid: string | null; roles: string[] } = { uid: null, roles: [] };
@@ -146,6 +149,19 @@ Deno.serve(async (req: Request) => {
 
   // deno-lint-ignore no-explicit-any
   const p: any = body.payload ?? {};
+
+  /** الدوري المؤرشف مقفول للتسجيل — الأدمن فقط يتجاوز (لتصحيح خطأ مثلًا) */
+  async function leagueLockedForCaller(matchId: string): Promise<boolean> {
+    if (auth.roles.includes("admin")) return false;
+    const { data } = await admin
+      .from("matches")
+      .select("leagues!inner(status)")
+      .eq("id", matchId)
+      .maybeSingle();
+    const status = (data as { leagues?: { status?: string } } | null)?.leagues?.status;
+    return status === "archived";
+  }
+
   try {
     switch (body.action) {
       case "insert_events": {
@@ -153,6 +169,9 @@ Deno.serve(async (req: Request) => {
           (e: Record<string, unknown>) => pick(e, EVENT_INSERT_FIELDS),
         );
         if (rows.length === 0) return json({ error: "no_events" }, 400);
+        if (await leagueLockedForCaller(String(rows[0].match_id))) {
+          return json({ error: "الدوري مقفول (مؤرشف) — لا تسجيل جديدًا" }, 409);
+        }
         // upsert بمعرّف العميل: إعادة إرسال طلب نجح ولم تصل استجابته لا تكرر الحدث
         const { error } = await admin
           .from("match_events")
@@ -180,6 +199,9 @@ Deno.serve(async (req: Request) => {
       }
       case "update_match": {
         if (!UUID_RE.test(String(p.id))) return json({ error: "bad_id" }, 400);
+        if (await leagueLockedForCaller(String(p.id))) {
+          return json({ error: "الدوري مقفول (مؤرشف) — لا تعديل" }, 409);
+        }
         const { error } = await admin
           .from("matches")
           .update(pick(p.patch ?? {}, MATCH_FIELDS))
@@ -295,6 +317,11 @@ Deno.serve(async (req: Request) => {
         const { data: team } = await admin
           .from("teams").select("id, league_id, name").eq("id", jc.team_id).single();
         if (!team) return json({ error: "الفريق غير موجود" }, 404);
+        const { data: lg } = await admin
+          .from("leagues").select("status").eq("id", team.league_id).single();
+        if (lg?.status === "archived") {
+          return json({ error: "هذا الدوري مقفول — لا انضمام جديدًا" }, 409);
+        }
         // عضو بالفعل في فريق بنفس الدوري؟
         const { data: existing } = await admin
           .from("players")
@@ -356,6 +383,48 @@ Deno.serve(async (req: Request) => {
           decided_at: new Date().toISOString(),
         }).eq("id", reqRow.id);
         if (upd.error) throw upd.error;
+        return json({ ok: true });
+      }
+      case "set_member_roles": {
+        // تعديل صلاحيات مستخدم في دوري محدد — أدمن فقط (مُدقق في البوابة أعلاه)
+        if (!UUID_RE.test(String(p.user_id)) || !UUID_RE.test(String(p.league_id))) {
+          return json({ error: "bad_id" }, 400);
+        }
+        const roles = (Array.isArray(p.roles) ? p.roles : [])
+          .filter((r: unknown) =>
+            ["admin", "moderator", "referee", "recorder"].includes(String(r)));
+        // حماية: لا يجرد الأدمن نفسه من admin فيقفل على نفسه (إلا مدير المنصة)
+        if (p.user_id === auth.uid && !roles.includes("admin")) {
+          const { data: prof } = await admin
+            .from("profiles").select("is_platform_admin").eq("id", auth.uid!).maybeSingle();
+          if (!prof?.is_platform_admin) {
+            return json({ error: "لا يمكنك تجريد نفسك من صلاحية الأدمن" }, 400);
+          }
+        }
+        if (roles.length === 0) {
+          const { error } = await admin
+            .from("league_members").delete()
+            .eq("league_id", p.league_id).eq("user_id", p.user_id);
+          if (error) throw error;
+        } else {
+          const { error } = await admin.from("league_members").upsert(
+            { league_id: p.league_id, user_id: p.user_id, roles, status: "active" },
+            { onConflict: "league_id,user_id" },
+          );
+          if (error) throw error;
+        }
+        return json({ ok: true });
+      }
+      case "set_league_status": {
+        // قفل/فتح دوري — المؤرشف يمنع التسجيل والانضمام ويبقى مقروءًا
+        if (!UUID_RE.test(String(p.league_id))) return json({ error: "bad_id" }, 400);
+        const status = String(p.status);
+        if (!["active", "archived"].includes(status)) {
+          return json({ error: "bad_status" }, 400);
+        }
+        const { error } = await admin
+          .from("leagues").update({ status }).eq("id", p.league_id);
+        if (error) throw error;
         return json({ ok: true });
       }
       case "set_captain": {

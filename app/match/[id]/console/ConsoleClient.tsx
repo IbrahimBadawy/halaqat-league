@@ -99,6 +99,18 @@ export default function ConsolePage() {
   if (!home.team || !away.team)
     return <CenterMsg text="أطراف هذه المباراة لم تتحدد بعد — تُحل تلقائيًا بعد اعتماد نتائج الدور السابق" />;
 
+  if (store.leagueLocked)
+    return (
+      <CenterMsg
+        text="هذا الدوري مقفول (مؤرشف) — النتائج للعرض فقط ولا تسجيل جديدًا"
+        action={
+          <Link href={`/match/${match.id}`} className="btn-gold mt-3 inline-flex h-11 items-center px-5 text-[14px]">
+            صفحة المباراة
+          </Link>
+        }
+      />
+    );
+
   if (status === "approved")
     return (
       <CenterMsg

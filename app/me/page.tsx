@@ -152,6 +152,13 @@ export default function MePage() {
                 بانتظار موافقة الكابتن
               </span>
             </div>
+          ) : store.leagueLocked ? (
+            <div className="card mb-4 flex items-center gap-2.5 px-3.5 py-3">
+              <span className="text-[18px]">🔒</span>
+              <span className="flex-1 text-[13px] font-semibold" style={{ color: "var(--text-3)" }}>
+                هذا الدوري مقفول — الانضمام متاح في الدوريات المفتوحة فقط
+              </span>
+            </div>
           ) : (
             <div className="card mb-4 px-3.5 py-3.5">
               <p className="mb-2 text-[13px]" style={{ color: "var(--text-2)" }}>

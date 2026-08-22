@@ -117,10 +117,9 @@ export default function MatchesPage() {
         })}
       </div>
 
-      {night === seed.matchDays[3] ? (
+      {isKnockout ? (
         <p className="pb-5 text-center text-[12.5px]" style={{ color: "var(--text-3)" }}>
-          نصفا النهائي في نفس الوقت على ملعبين · النهائي بفترة <span className="num">30</span> دقيقة ·
-          الأطراف تتحدد تلقائيًا بعد اعتماد النتائج
+          أطراف الإقصائيات تتحدد تلقائيًا بعد اعتماد نتائج الدور السابق
         </p>
       ) : null}
     </div>
