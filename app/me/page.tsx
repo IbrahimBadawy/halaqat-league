@@ -171,7 +171,7 @@ export default function MePage() {
                   placeholder="ABC123"
                   dir="ltr"
                   maxLength={10}
-                  className="num h-12 flex-1 rounded-[12px] px-3.5 text-center text-[16px] font-bold tracking-[3px] text-white outline-none"
+                  className="num h-12 w-0 min-w-0 flex-1 rounded-[12px] px-3 text-center text-[16px] font-bold tracking-[2px] text-white outline-none"
                   style={inputStyle}
                 />
                 <button
@@ -182,7 +182,7 @@ export default function MePage() {
                     setJoinMsg(msg ?? "أُرسل طلبك — بانتظار موافقة الكابتن ✓");
                     if (!msg) setJoinCode("");
                   }}
-                  className="btn-gold h-12 flex-none px-5 text-[14px] disabled:opacity-40"
+                  className="btn-gold h-12 flex-none whitespace-nowrap px-4 text-[14px] disabled:opacity-40"
                 >
                   طلب انضمام
                 </button>
@@ -231,7 +231,7 @@ export default function MePage() {
                       .filter((r) => r.teamCode === code)
                       .map((r) => (
                         <div key={r.id} className="flex items-center gap-2 border-t py-2" style={{ borderColor: "var(--border-softer)" }}>
-                          <span className="flex-1 text-[13.5px] font-semibold text-white">
+                          <span className="min-w-0 flex-1 truncate text-[13.5px] font-semibold text-white">
                             {r.displayName}
                             <span className="ms-1.5 text-[11.5px]" style={{ color: "var(--text-3)" }}>
                               @{r.username}
@@ -239,14 +239,14 @@ export default function MePage() {
                           </span>
                           <button
                             onClick={() => void decideJoin(r.id, true)}
-                            className="pill px-3 py-1.5 text-[12.5px] font-bold"
+                            className="pill flex-none whitespace-nowrap px-3 py-1.5 text-[12.5px] font-bold"
                             style={{ background: "rgba(30,127,58,.15)", color: "var(--green-text)", border: "1px solid rgba(30,127,58,.4)" }}
                           >
                             قبول ✓
                           </button>
                           <button
                             onClick={() => void decideJoin(r.id, false)}
-                            className="pill px-3 py-1.5 text-[12.5px] font-bold"
+                            className="pill flex-none whitespace-nowrap px-3 py-1.5 text-[12.5px] font-bold"
                             style={{ background: "rgba(229,72,77,.12)", color: "var(--live)", border: "1px solid rgba(229,72,77,.35)" }}
                           >
                             رفض
@@ -262,15 +262,19 @@ export default function MePage() {
           {/* تغيير كلمة المرور */}
           <SectionTitle>كلمة المرور</SectionTitle>
           <div className="card mb-4 px-3.5 py-3.5">
+            <p className="mb-2 text-[13px]" style={{ color: "var(--text-2)" }}>
+              اختر كلمة مرور جديدة — 8 أحرف على الأقل:
+            </p>
             <div className="flex gap-2">
+              {/* بلا dir=ltr: القيمة مُقنَّعة فلا أثر للاتجاه عليها، والنص العربي
+                  يبقى محاذيًا لليمين مثل باقي الواجهة بدل أن ينقلب ترتيبه */}
               <input
                 type="password"
                 value={newPass}
                 onChange={(e) => setNewPass(e.target.value)}
-                placeholder="كلمة مرور جديدة (8+ أحرف)"
+                placeholder="كلمة مرور جديدة"
                 autoComplete="new-password"
-                dir="ltr"
-                className="h-12 flex-1 rounded-[12px] px-3.5 text-[14px] text-white outline-none"
+                className="h-12 w-0 min-w-0 flex-1 rounded-[12px] px-3.5 text-[14px] text-white outline-none"
                 style={inputStyle}
               />
               <button
@@ -280,7 +284,7 @@ export default function MePage() {
                   setPassMsg(msg ?? "تم تغيير كلمة المرور ✓");
                   if (!msg) setNewPass("");
                 }}
-                className="btn-gold h-12 flex-none px-5 text-[14px] disabled:opacity-40"
+                className="btn-gold h-12 flex-none whitespace-nowrap px-4 text-[14px] disabled:opacity-40"
               >
                 تغيير
               </button>

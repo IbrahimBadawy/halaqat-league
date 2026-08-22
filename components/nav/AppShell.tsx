@@ -48,7 +48,6 @@ function ForcePasswordChange() {
             onChange={(e) => setP1(e.target.value)}
             placeholder="كلمة المرور الجديدة"
             autoComplete="new-password"
-            dir="ltr"
             className="h-12 w-full rounded-[12px] px-3.5 text-[15px] text-white outline-none"
             style={{ background: "rgba(255,255,255,.06)", border: "1px solid var(--border-soft)" }}
           />
@@ -58,7 +57,6 @@ function ForcePasswordChange() {
             onChange={(e) => setP2(e.target.value)}
             placeholder="تأكيد كلمة المرور"
             autoComplete="new-password"
-            dir="ltr"
             className="h-12 w-full rounded-[12px] px-3.5 text-[15px] text-white outline-none"
             style={{ background: "rgba(255,255,255,.06)", border: "1px solid var(--border-soft)" }}
           />
