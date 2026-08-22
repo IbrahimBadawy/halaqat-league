@@ -17,7 +17,11 @@ const TABS = [
 export default function AdminNav() {
   const pathname = usePathname();
   return (
-    <nav className="mb-5 flex flex-wrap gap-1.5 rounded-[14px] bg-white p-1.5" style={{ border: "1px solid #E3E7F2" }}>
+    // على الموبايل صف واحد يُمرَّر أفقيًا (الالتفاف كان يأكل 4 أسطر من الشاشة)
+    <nav
+      className="no-scrollbar mb-5 flex gap-1.5 overflow-x-auto rounded-[14px] bg-white p-1.5 sm:flex-wrap sm:overflow-visible"
+      style={{ border: "1px solid #E3E7F2" }}
+    >
       {TABS.map((t) => {
         const active =
           t.href === "/admin"
@@ -27,7 +31,7 @@ export default function AdminNav() {
           <Link
             key={t.href}
             href={t.href}
-            className="rounded-[10px] px-3.5 py-2 text-[13px] font-bold"
+            className="flex-none whitespace-nowrap rounded-[10px] px-3.5 py-2 text-[13px] font-bold"
             style={
               active
                 ? { background: "#0B1230", color: "#fff" }
@@ -40,7 +44,7 @@ export default function AdminNav() {
       })}
       <Link
         href="/"
-        className="ms-auto rounded-[10px] px-3.5 py-2 text-[13px] font-bold"
+        className="ms-auto flex-none whitespace-nowrap rounded-[10px] px-3.5 py-2 text-[13px] font-bold"
         style={{ color: "#175CD3" }}
       >
         ← عرض التطبيق

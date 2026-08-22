@@ -185,7 +185,7 @@ export default function NewLeaguePage() {
         {/* 1. الأساسيات */}
         <section className="mb-4 rounded-[16px] bg-white p-4" style={{ border: BORDER }}>
           <h2 className="mb-3 font-display text-[16px] font-bold">1 · الأساسيات</h2>
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
             <label className="text-[12.5px] font-bold">
               اسم الدوري *
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="دوري الحلقات — شتاء 2026" className={inputCls} style={inputStyle} />
@@ -219,7 +219,7 @@ export default function NewLeaguePage() {
               ))}
             </span>
           </div>
-          <div className="grid gap-3 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             {GROUP_LETTERS.slice(0, groupCount).map((letter, i) => (
               <label key={letter} className="text-[12.5px] font-bold">
                 المجموعة {letter} — اسم فريق في كل سطر ({groups[i]?.teams.length ?? 0})
@@ -245,7 +245,7 @@ export default function NewLeaguePage() {
         {/* 3. الأيام والفترات والملاعب */}
         <section className="mb-4 rounded-[16px] bg-white p-4" style={{ border: BORDER }}>
           <h2 className="mb-3 font-display text-[16px] font-bold">3 · الأيام والفترات والملاعب</h2>
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
             <label className="text-[12.5px] font-bold">
               أيام اللعب — يوم في كل سطر (YYYY-MM-DD)
               <textarea value={daysText} onChange={(e) => setDaysText(e.target.value)} rows={5}

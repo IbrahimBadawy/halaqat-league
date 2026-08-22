@@ -277,6 +277,11 @@ export interface LeagueStore {
     leagueId: string,
     includePosts: boolean,
   ) => Promise<{ error?: string; detail?: string }>;
+  /**
+   * حذف دوري بالكامل (مدير المنصة فقط): الدوري وفرقه ولاعبوه وجدوله وكل
+   * بياناته. لا رجعة فيه، ولا يُسمح بحذف آخر دوري على المنصة.
+   */
+  deleteLeague: (leagueId: string) => Promise<{ error?: string; detail?: string }>;
   adminCreateAccount: (
     username: string,
     password: string,
@@ -1117,6 +1122,27 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     [refresh],
   );
 
+  const deleteLeague = useCallback(
+    async (leagueId: string): Promise<{ error?: string; detail?: string }> => {
+      const res = await liveCall("delete_league", {
+        league_id: leagueId,
+        confirm: "DELETE",
+      });
+      if (!res.ok) return { error: res.error ?? "تعذّر الحذف" };
+      const remaining = await fetchLeagues().catch(() => []);
+      setLeagues(remaining);
+      // لو المحذوف هو المعروض حاليًا ننتقل لأقدم دوري باقٍ حتى لا تبقى الواجهة
+      // معلّقة على معرّف لم يعد موجودًا
+      if (activeRef.current === leagueId && remaining[0]) {
+        setActiveLeague(remaining[0].id);
+      } else {
+        await refresh();
+      }
+      return { detail: String(res.data?.detail ?? "") };
+    },
+    [refresh, setActiveLeague],
+  );
+
   const adminCreateLeague = useCallback(
     async (payload: NewLeaguePayload): Promise<{ error?: string; leagueId?: string }> => {
       const res = await liveCall("create_league", { league: payload });
@@ -1764,6 +1790,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     adminDeleteAccount,
     setLeagueStatus,
     resetLeague,
+    deleteLeague,
     canModerate: (user?.roles ?? []).some((r) => r === "admin" || r === "moderator"),
     bans: live.bans,
     deletePost,

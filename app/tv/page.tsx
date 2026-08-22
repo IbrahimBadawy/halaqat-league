@@ -111,7 +111,7 @@ export default function TvPage() {
       )}
 
       {/* ————— مباريات الليلة + الترتيب ————— */}
-      <div className="grid flex-1 items-start gap-4 md:grid-cols-2 xl:grid-cols-[1.25fr_1fr_1fr]">
+      <div className="grid flex-1 grid-cols-1 items-start gap-4 md:grid-cols-2 xl:grid-cols-[1.25fr_1fr_1fr]">
         {/* مباريات الليلة */}
         <section className="card p-3.5 md:col-span-2 md:p-4 xl:col-span-1">
           <div className="mb-2.5 flex items-center gap-2">

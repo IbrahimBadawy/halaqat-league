@@ -124,7 +124,7 @@ export default function AdminTeamsPage() {
             عيّن الكابتن من القائمة — الكابتن يرى كود فريقه في صفحة «أنا» ويشاركه
             مع لاعبيه ويقبل طلباتهم بنفسه.
           </p>
-          <div className="grid gap-2 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
             {seed.teams.map((t) => (
               <div key={t.code} className="rounded-[12px] p-2.5" style={{ background: "#F7F9FE", border: BORDER }}>
                 <div className="flex flex-wrap items-center gap-2">

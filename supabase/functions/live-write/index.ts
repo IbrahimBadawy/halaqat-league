@@ -129,7 +129,7 @@ Deno.serve(async (req: Request) => {
   // أفعال الإشراف على المجتمع: أدمن أو مشرف
   const MOD_ACTIONS = ["delete_post", "ban_poster", "unban_poster"];
   // أفعال مدمِّرة لا رجعة فيها — مدير المنصة وحده (ولا حتى أدمن الدوري)
-  const PLATFORM_ACTIONS = ["reset_league"];
+  const PLATFORM_ACTIONS = ["reset_league", "delete_league"];
   const STAFF_ROLES = ["admin", "referee", "recorder"];
 
   let auth: { uid: string | null; roles: string[]; platform: boolean } =
@@ -803,6 +803,95 @@ Deno.serve(async (req: Request) => {
         if (audit.error) throw audit.error;
 
         return json({ ok: true, wiped, matches: matchIds.length, detail });
+      }
+      case "delete_league": {
+        // حذف دوري بالكامل من المنصة — مدير المنصة وحده (فُحص أعلاه).
+        // الحذف يدويًا بترتيب الأبناء أولًا: بعض المفاتيح الأجنبية NO ACTION
+        // (matches.venue_id / matches.group_id / match_events.team_id …) فحذف
+        // صف الدوري وحده قد يفشل حسب ترتيب الـ cascade.
+        if (!UUID_RE.test(String(p.league_id))) return json({ error: "bad_id" }, 400);
+        if (String(p.confirm) !== "DELETE") return json({ error: "confirm_required" }, 400);
+        const leagueId = String(p.league_id);
+
+        const lg = await admin
+          .from("leagues").select("name").eq("id", leagueId).maybeSingle();
+        if (lg.error) throw lg.error;
+        if (!lg.data) return json({ error: "لا يوجد دوري بهذا المعرّف" }, 404);
+
+        const all = await admin.from("leagues").select("id", { count: "exact", head: true });
+        if (all.error) throw all.error;
+        if ((all.count ?? 0) <= 1) {
+          return json({ error: "لا يمكن حذف آخر دوري على المنصة" }, 409);
+        }
+
+        const mq = await admin.from("matches").select("id").eq("league_id", leagueId);
+        if (mq.error) throw mq.error;
+        const matchIds = (mq.data ?? []).map((m) => m.id as string);
+
+        const tq = await admin.from("teams").select("id").eq("league_id", leagueId);
+        if (tq.error) throw tq.error;
+        const teamIds = (tq.data ?? []).map((t) => t.id as string);
+
+        const sq = await admin.from("stages").select("id").eq("league_id", leagueId);
+        if (sq.error) throw sq.error;
+        const stageIds = (sq.data ?? []).map((x) => x.id as string);
+
+        const vq = await admin.from("venues").select("id").eq("league_id", leagueId);
+        if (vq.error) throw vq.error;
+        const venueIds = (vq.data ?? []).map((v) => v.id as string);
+
+        const removed: Record<string, number> = {};
+        const wipe = async (
+          table: string,
+          col: string,
+          ids: string[] | null,
+        ) => {
+          if (ids && ids.length === 0) return;
+          const q = admin.from(table).delete({ count: "exact" });
+          const r = await (ids ? q.in(col, ids) : q.eq(col, leagueId));
+          if (r.error) throw r.error;
+          removed[table] = (removed[table] ?? 0) + (r.count ?? 0);
+        };
+
+        // أبناء المباريات ثم المباريات
+        for (const t of ["match_events", "match_lineups", "match_reports", "match_officials", "card_usages"]) {
+          await wipe(t, "match_id", matchIds);
+        }
+        await wipe("predictions", "league_id", null);
+        await wipe("standing_adjustments", "league_id", null);
+        await wipe("posts", "league_id", null);
+        await wipe("audit_log", "league_id", null);
+        await wipe("matches", "league_id", null);
+
+        // أبناء الفرق ثم الفرق (استخدامات كروت بلا مباراة تُحذف بمعرّف الكارت)
+        const cq = teamIds.length
+          ? await admin.from("team_cards").select("id").in("team_id", teamIds)
+          : { data: [] as { id: string }[], error: null };
+        if (cq.error) throw cq.error;
+        await wipe("card_usages", "team_card_id", (cq.data ?? []).map((c) => c.id as string));
+        await wipe("team_cards", "team_id", teamIds);
+        await wipe("power_card_templates", "league_id", null);
+        await wipe("group_teams", "team_id", teamIds);
+        await wipe("join_requests", "team_id", teamIds);
+        await wipe("team_join_codes", "team_id", teamIds);
+        await wipe("players", "team_id", teamIds);
+        await wipe("teams", "league_id", null);
+
+        // المراحل والمجموعات والملاعب والعضويات ثم الدوري نفسه
+        await wipe("groups", "stage_id", stageIds);
+        await wipe("stages", "league_id", null);
+        await wipe("venue_availability", "venue_id", venueIds);
+        await wipe("venues", "league_id", null);
+        await wipe("league_members", "league_id", null);
+
+        const del = await admin.from("leagues").delete().eq("id", leagueId);
+        if (del.error) throw del.error;
+
+        return json({
+          ok: true, removed,
+          detail: `حُذف «${lg.data.name}» نهائيًا: ${matchIds.length} مباراة و` +
+            `${teamIds.length} فريقًا و${removed.players ?? 0} لاعبًا وكل ما يخصه.`,
+        });
       }
       default:
         return json({ error: "unknown_action" }, 400);

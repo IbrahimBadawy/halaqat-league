@@ -9,43 +9,90 @@ import AdminNav from "@/components/nav/AdminNav";
 import { useLeague } from "@/lib/league/store";
 
 const BORDER = "1px solid #E3E7F2";
-/** ثوانٍ إجبارية بين التأكيد الأول والتأكيد النهائي للتصفير */
-const RESET_GAP_SECONDS = 10;
+/** ثوانٍ إجبارية بين التأكيد الأول والتأكيد النهائي (تصفير أو حذف) */
+const CONFIRM_GAP_SECONDS = 10;
+
+type DangerAction = "reset" | "delete";
+
+const DANGER_COPY: Record<
+  DangerAction,
+  { button: string; title: (n: string) => string; confirm: string; running: string }
+> = {
+  reset: {
+    button: "🧨 تصفير بيانات هذا الدوري",
+    title: (n) => `تصفير «${n}» — لا رجعة فيه`,
+    confirm: "🧨 تأكيد نهائي — صفّر الآن",
+    running: "جارٍ التصفير…",
+  },
+  delete: {
+    button: "🗑️ حذف الدوري نهائيًا",
+    title: (n) => `حذف «${n}» من المنصة — لا رجعة فيه`,
+    confirm: "🗑️ تأكيد نهائي — احذف الآن",
+    running: "جارٍ الحذف…",
+  },
+};
 
 /**
- * منطقة الخطر — تصفير دوري. مدير المنصة وحده يراها (والبوابة تتحقق كذلك،
- * فإخفاء الزر ليس هو الحماية). تأكيدان بينهما 10 ثوانٍ إجبارية.
+ * منطقة الخطر — تصفير الدوري أو حذفه بالكامل. مدير المنصة وحده يراها
+ * (والبوابة تتحقق كذلك، فإخفاء الزر ليس هو الحماية). أي الفعلين يمر
+ * بتأكيدين بينهما 10 ثوانٍ إجبارية.
  * مكوّن على مستوى الملف: صفحات هذا المشروع تُعاد رندرتها مع Realtime،
  * وأي مكوّن ذي حالة يُعرَّف داخل مكوّن آخر يفقد حالته عند كل رندر.
  */
-function ResetLeagueDanger({ league }: { league: { id: string; name: string } }) {
-  const { user, resetLeague } = useLeague();
-  const [stage, setStage] = useState<"idle" | "wait" | "ready" | "running" | "done">("idle");
-  const [left, setLeft] = useState(RESET_GAP_SECONDS);
+function LeagueDangerZone({ league }: { league: { id: string; name: string } }) {
+  const { user, resetLeague, deleteLeague } = useLeague();
+  const [action, setAction] = useState<DangerAction | null>(null);
+  const [stage, setStage] = useState<"wait" | "ready" | "running">("wait");
+  const [left, setLeft] = useState(CONFIRM_GAP_SECONDS);
   const [withPosts, setWithPosts] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // العدّاد بين التأكيدين — لا يبدأ إلا بعد التأكيد الأول
   useEffect(() => {
-    if (stage !== "wait") return;
+    if (!action || stage !== "wait") return;
     if (left <= 0) {
       setStage("ready");
       return;
     }
     const t = setTimeout(() => setLeft((n) => n - 1), 1000);
     return () => clearTimeout(t);
-  }, [stage, left]);
+  }, [action, stage, left]);
 
   if (!user?.isPlatformAdmin) return null;
 
+  const open = (a: DangerAction) => {
+    setResult(null);
+    setError(null);
+    setLeft(CONFIRM_GAP_SECONDS);
+    setStage("wait");
+    setAction(a);
+  };
   const cancel = () => {
-    setStage("idle");
-    setLeft(RESET_GAP_SECONDS);
+    setAction(null);
+    setLeft(CONFIRM_GAP_SECONDS);
     setError(null);
   };
 
-  const panelOpen = stage === "wait" || stage === "ready" || stage === "running";
+  const run = async () => {
+    if (!action) return;
+    setStage("running");
+    setError(null);
+    const res =
+      action === "reset"
+        ? await resetLeague(league.id, withPosts)
+        : await deleteLeague(league.id);
+    if (res.error) {
+      setError(res.error);
+      setStage("ready");
+      return;
+    }
+    setResult(res.detail || (action === "reset" ? "تم تصفير الدوري" : "حُذف الدوري"));
+    setAction(null);
+    setLeft(CONFIRM_GAP_SECONDS);
+  };
+
+  const copy = action ? DANGER_COPY[action] : null;
 
   return (
     <div className="mt-3 rounded-[12px] p-3" style={{ background: "#FEF3F2", border: "1px solid #FECDCA" }}>
@@ -53,83 +100,89 @@ function ResetLeagueDanger({ league }: { league: { id: string; name: string } })
         ⚠️ منطقة الخطر — مدير المنصة فقط
       </p>
 
-      {stage === "idle" || stage === "done" ? (
+      {!action ? (
         <>
-          <button
-            onClick={() => {
-              setResult(null);
-              setError(null);
-              setLeft(RESET_GAP_SECONDS);
-              setStage("wait");
-            }}
-            className="h-10 rounded-[10px] px-4 text-[13px] font-bold"
-            style={{ background: "#fff", color: "#B42318", border: "1px solid #FDA29B" }}
-          >
-            🧨 تصفير بيانات هذا الدوري
-          </button>
+          <div className="flex flex-wrap gap-1.5">
+            {(["reset", "delete"] as const).map((a) => (
+              <button
+                key={a}
+                onClick={() => open(a)}
+                className="h-10 flex-none whitespace-nowrap rounded-[10px] px-4 text-[13px] font-bold"
+                style={
+                  a === "reset"
+                    ? { background: "#fff", color: "#B42318", border: "1px solid #FDA29B" }
+                    : { background: "#B42318", color: "#fff", border: "1px solid #B42318" }
+                }
+              >
+                {DANGER_COPY[a].button}
+              </button>
+            ))}
+          </div>
           {result ? (
             <p className="mt-2 text-[12.5px] font-semibold" style={{ color: "#067647" }}>
               ✓ {result}
             </p>
           ) : null}
         </>
-      ) : null}
-
-      {panelOpen ? (
+      ) : (
         <div>
           <p className="mb-1.5 text-[13px] font-bold" style={{ color: "#B42318" }}>
-            تصفير «{league.name}» — لا رجعة فيه
-          </p>
-          <p className="mb-1 text-[12.5px]" style={{ color: "var(--text-2)" }}>
-            <b>يُمسح:</b> كل الأحداث والنتائج والتشكيلات وتقارير المباريات
-            واستخدامات كروت القوة وتعديلات النقاط والتوقعات وسجل التدقيق،
-            وكل المباريات ترجع «مجدولة».
-          </p>
-          <p className="mb-2 text-[12.5px]" style={{ color: "var(--text-2)" }}>
-            <b>لا يُمس:</b> الفرق واللاعبون وأرقام القمصان والحسابات وأكواد
-            الانضمام والجدول (المواعيد والملاعب والمدد).
+            {copy!.title(league.name)}
           </p>
 
-          <label className="mb-2.5 flex items-center gap-2 text-[12.5px] font-semibold" style={{ color: "var(--text-1)" }}>
-            <input
-              type="checkbox"
-              checked={withPosts}
-              disabled={stage === "running"}
-              onChange={(e) => setWithPosts(e.target.checked)}
-              className="h-4 w-4"
-            />
-            امسح منشورات المجتمع كمان
-          </label>
+          {action === "reset" ? (
+            <>
+              <p className="mb-1 text-[12.5px]" style={{ color: "var(--text-2)" }}>
+                <b>يُمسح:</b> كل الأحداث والنتائج والتشكيلات وتقارير المباريات
+                واستخدامات كروت القوة وتعديلات النقاط والتوقعات وسجل التدقيق،
+                وكل المباريات ترجع «مجدولة».
+              </p>
+              <p className="mb-2 text-[12.5px]" style={{ color: "var(--text-2)" }}>
+                <b>لا يُمس:</b> الفرق واللاعبون وأرقام القمصان والحسابات وأكواد
+                الانضمام والجدول (المواعيد والملاعب والمدد).
+              </p>
+              <label className="mb-2.5 flex items-center gap-2 text-[12.5px] font-semibold" style={{ color: "var(--text-1)" }}>
+                <input
+                  type="checkbox"
+                  checked={withPosts}
+                  disabled={stage === "running"}
+                  onChange={(e) => setWithPosts(e.target.checked)}
+                  className="h-4 w-4 flex-none"
+                />
+                امسح منشورات المجتمع كمان
+              </label>
+            </>
+          ) : (
+            <>
+              <p className="mb-1 text-[12.5px]" style={{ color: "var(--text-2)" }}>
+                <b>يُحذف نهائيًا:</b> الدوري نفسه وفرقه ولاعبوه وأكواد الانضمام
+                وملاعبه وجدوله وكل أحداثه ونتائجه وتوقعاته ومنشوراته وصلاحيات
+                أعضائه فيه.
+              </p>
+              <p className="mb-2.5 text-[12.5px]" style={{ color: "var(--text-2)" }}>
+                <b>لا يُحذف:</b> حسابات المستخدمين نفسها (تبقى على المنصة).
+                ولا يمكن حذف آخر دوري متبقٍّ.
+              </p>
+            </>
+          )}
 
           <div className="flex flex-wrap gap-1.5">
             <button
               disabled={stage !== "ready"}
-              onClick={async () => {
-                setStage("running");
-                setError(null);
-                const res = await resetLeague(league.id, withPosts);
-                if (res.error) {
-                  setError(res.error);
-                  setStage("ready");
-                  return;
-                }
-                setResult(res.detail || "تم تصفير الدوري");
-                setLeft(RESET_GAP_SECONDS);
-                setStage("done");
-              }}
-              className="h-10 rounded-[10px] px-4 text-[13px] font-bold text-white disabled:opacity-45"
+              onClick={run}
+              className="h-10 flex-none whitespace-nowrap rounded-[10px] px-4 text-[13px] font-bold text-white disabled:opacity-45"
               style={{ background: "#B42318" }}
             >
               {stage === "running"
-                ? "جارٍ التصفير…"
+                ? copy!.running
                 : stage === "ready"
-                  ? "🧨 تأكيد نهائي — صفّر الآن"
+                  ? copy!.confirm
                   : `تأكيد نهائي بعد ${left} ث`}
             </button>
             <button
               disabled={stage === "running"}
               onClick={cancel}
-              className="h-10 rounded-[10px] px-4 text-[13px] font-bold disabled:opacity-45"
+              className="h-10 flex-none whitespace-nowrap rounded-[10px] px-4 text-[13px] font-bold disabled:opacity-45"
               style={{ background: "#fff", color: "var(--text-1)", border: BORDER }}
             >
               إلغاء
@@ -147,10 +200,11 @@ function ResetLeagueDanger({ league }: { league: { id: string; name: string } })
             </p>
           ) : null}
         </div>
-      ) : null}
+      )}
     </div>
   );
 }
+
 
 export default function AdminLeaguesPage() {
   const store = useLeague();
@@ -171,7 +225,7 @@ export default function AdminLeaguesPage() {
 
   return (
     <div className="admin-theme min-h-dvh" style={{ background: "var(--bg-base)", color: "var(--text-1)" }}>
-      <div className="mx-auto max-w-[1100px] px-5 py-6">
+      <div className="mx-auto max-w-[1100px] px-4 py-6 sm:px-5">
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <h1 className="font-display text-[24px] font-bold">🏆 الدوريات</h1>
           <Link href="/admin/new-league" className="ms-auto rounded-[12px] px-4 py-2 text-[13.5px] font-bold text-white" style={{ background: "#067647" }}>
@@ -189,7 +243,7 @@ export default function AdminLeaguesPage() {
           </p>
         ) : null}
 
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {leagues.map((l) => {
             const active = l.id === activeLeagueId;
             const locked = l.status === "archived";
@@ -248,7 +302,7 @@ export default function AdminLeaguesPage() {
                           : "🔒 قفل الدوري (أرشفة)"}
                   </button>
                 </div>
-                <ResetLeagueDanger league={{ id: l.id, name: l.name }} />
+                <LeagueDangerZone league={{ id: l.id, name: l.name }} />
               </div>
             );
           })}

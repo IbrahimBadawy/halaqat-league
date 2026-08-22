@@ -101,7 +101,7 @@ export default function AdminPage() {
           ))}
         </div>
 
-        <div className="grid gap-5 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
           {/* الاعتمادات */}
           <section className="rounded-[16px] bg-white p-4" style={{ border: "1px solid #E3E7F2" }}>
             <h2 className="mb-3 font-display text-[17px] font-bold">نتائج تنتظر الاعتماد</h2>
