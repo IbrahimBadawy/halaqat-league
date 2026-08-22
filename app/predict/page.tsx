@@ -18,7 +18,8 @@ function predictionPoints(pred: Prediction, actual: { home: number; away: number
 }
 
 export default function PredictPage() {
-  const { matches, hydrated, statusOf, scoreOf, resolveSide, state, setPrediction } = useLeague();
+  const { matches, hydrated, statusOf, scoreOf, resolveSide, state, setPrediction, connected } =
+    useLeague();
 
   if (!hydrated) return null;
 
@@ -45,6 +46,15 @@ export default function PredictPage() {
           اتجاه صحيح (فائز/تعادل) = نقطة.
         </p>
       </div>
+
+      {!connected ? (
+        <div
+          className="mt-3 rounded-[12px] px-3.5 py-2.5 text-[12.5px] font-semibold"
+          style={{ background: "rgba(244,196,48,.1)", border: "1px solid rgba(244,196,48,.4)", color: "var(--warn)" }}
+        >
+          لا اتصال بالخادم — التوقعات لن تُحفظ حتى يعود الاتصال
+        </div>
+      ) : null}
 
       {/* رصيد النقاط */}
       <div className="card my-3 flex items-center justify-between px-4 py-3.5">

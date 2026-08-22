@@ -140,6 +140,8 @@ export interface LeagueStore {
   onFieldPlayers: (matchId: string, teamCode: string) => Player[];
   benchPlayers: (matchId: string, teamCode: string) => Player[];
 
+  /** هل وصلت بيانات القاعدة؟ (false = نعرض seed مدمجًا والكتابة غير ممكنة) */
+  connected: boolean;
   /** كتابات لم تصل القاعدة بعد (انقطاع شبكة) — تُرسل تلقائيًا عند العودة */
   pendingWrites: number;
   /** كتابات أُسقطت نهائيًا بعد رفض متكرر — تستدعي تدخلًا يدويًا */
@@ -1202,6 +1204,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     hydrated,
     matches,
     matchOf,
+    connected,
     pendingWrites: pending,
     droppedWrites: dropped,
     scheduleConflicts,

@@ -17,7 +17,7 @@ type FeedItem =
   | { kind: "system"; at: number; match: Match };
 
 export default function CommunityPage() {
-  const { seed, matches, hydrated, statusOf, scoreOf, resolveSide, state, addPost, likePost } =
+  const { seed, matches, hydrated, statusOf, scoreOf, resolveSide, state, addPost, likePost, connected } =
     useLeague();
 
   const [author, setAuthor] = useState<string>(() =>
@@ -35,7 +35,8 @@ export default function CommunityPage() {
 
   const feed = [...userItems, ...systemItems].sort((a, b) => b.at - a.at);
 
-  const canPublish = text.trim().length > 0;
+  // بلا اتصال بالقاعدة لا نقبل نشرًا: كان المنشور يظهر ثم يختفي عند أول مزامنة
+  const canPublish = text.trim().length > 0 && connected;
 
   function publish() {
     const body = text.trim();
@@ -94,7 +95,12 @@ export default function CommunityPage() {
           className="w-full resize-none rounded-[11px] px-3 py-2.5 text-[14px] leading-relaxed text-white outline-none"
           style={{ background: "rgba(255,255,255,.05)", border: "1px solid var(--border-soft)" }}
         />
-        <div className="mt-2 flex justify-end">
+        <div className="mt-2 flex items-center justify-end gap-2">
+          {!connected ? (
+            <span className="flex-1 text-[12px] font-semibold" style={{ color: "var(--warn)" }}>
+              لا اتصال بالخادم — النشر متوقف مؤقتًا حتى يعود
+            </span>
+          ) : null}
           <button
             onClick={publish}
             disabled={!canPublish}
