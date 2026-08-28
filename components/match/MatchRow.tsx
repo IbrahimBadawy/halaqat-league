@@ -58,8 +58,7 @@ export default function MatchRow({
           </span>
         ) : (
           <span className="num font-display text-[15px] font-bold" style={{ color: "var(--gold)" }}>
-            {/* المضيف يمين والضيف شمال (RTL): نكتب away–home ليقع رقم كل فريق تحت اسمه */}
-            {score.away} – {score.home}
+            {score.home} – {score.away}
           </span>
         )}
         <span className="truncate">{away.team?.name ?? away.label}</span>

@@ -119,8 +119,7 @@ export default function MatchPage() {
                 className={`num font-display text-[48px] font-bold leading-none tracking-wide ${isLive ? "gold-shimmer" : ""}`}
                 style={isLive ? undefined : { color: "var(--gold)" }}
               >
-                {/* away–home: المضيف يمين في RTL فيتطابق الرقم مع الاسم */}
-                {score.away} – {score.home}
+                {score.home} – {score.away}
               </span>
             )}
             {isLive ? (
@@ -139,7 +138,7 @@ export default function MatchPage() {
             </span>
             {report?.homePens !== undefined && report?.awayPens !== undefined ? (
               <span className="num text-[12.5px] font-semibold" style={{ color: "var(--text-2)" }}>
-                ركلات الترجيح {report.awayPens} – {report.homePens}
+                ركلات الترجيح {report.homePens} – {report.awayPens}
               </span>
             ) : null}
           </span>
@@ -344,8 +343,7 @@ function HeadToHead({
             <span className="min-w-0 flex-1 truncate text-[14px] font-semibold text-white">
               {teamByCode(m.home)?.name}{" "}
               <span className="num font-display font-bold" style={{ color: "var(--gold)" }}>
-                {/* away–home: المضيف يمين في RTL */}
-                {s.away} – {s.home}
+                {s.home} – {s.away}
               </span>{" "}
               {teamByCode(m.away)?.name}
             </span>

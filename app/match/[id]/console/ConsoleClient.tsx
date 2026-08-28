@@ -320,10 +320,8 @@ export default function ConsolePage() {
           <Shield code={homeCode} size={30} gold={false} />
           <span className="truncate text-[15px] font-semibold text-white">{home.team.name}</span>
         </span>
-        {/* المضيف على اليمين والضيف على الشمال (RTL)، والنتيجة .num تُعرض LTR —
-            فنكتب الضيف ثم المضيف حتى يقع رقم كل فريق تحت اسمه ورُوستره */}
         <span className="num flex-none font-display text-[42px] font-bold leading-none" style={{ color: "var(--gold)" }}>
-          {score.away} – {score.home}
+          {score.home} – {score.away}
         </span>
         <span className="flex min-w-0 flex-1 items-center justify-end gap-1.5">
           <span className="truncate text-[15px] font-semibold text-white">{away.team.name}</span>
@@ -1262,9 +1260,8 @@ function EndSheet({
     <Sheet title={status === "finished" ? "الاعتماد النهائي" : "إنهاء المباراة"} onClose={onClose}>
       <div className="card mb-3 flex items-center justify-center gap-3 p-3">
         <span className="text-[14px] font-semibold text-white">{store.teamByCode(homeCode)?.name}</span>
-        {/* المضيف يمين والضيف شمال (RTL) — نكتب الضيف ثم المضيف ليتطابق كل رقم مع اسمه */}
         <span className="num font-display text-[30px] font-bold" style={{ color: "var(--gold)" }}>
-          {score.away} – {score.home}
+          {score.home} – {score.away}
         </span>
         <span className="text-[14px] font-semibold text-white">{store.teamByCode(awayCode)?.name}</span>
       </div>

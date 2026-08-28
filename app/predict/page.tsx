@@ -228,15 +228,14 @@ export default function PredictPage() {
           <Shield code={h.team?.code ?? match.home} size={22} gold={false} />
           <span className="min-w-0 flex-1 truncate">{h.team?.name ?? h.label}</span>
           <span className="num font-display text-[17px] font-bold" style={{ color: "var(--gold)" }}>
-            {/* away-home: المضيف يمين في RTL */}
-            {actual.away} - {actual.home}
+            {actual.home} - {actual.away}
           </span>
           <span className="min-w-0 flex-1 truncate text-end">{a.team?.name ?? a.label}</span>
           <Shield code={a.team?.code ?? match.away} size={22} gold={false} />
         </div>
 
         <div className="mt-1.5 text-center text-[11.5px]" style={{ color: "var(--text-3)" }}>
-          توقعك: <span className="num font-display font-bold" style={{ color: "var(--text-2)" }}>{pred.away} - {pred.home}</span>
+          توقعك: <span className="num font-display font-bold" style={{ color: "var(--text-2)" }}>{pred.home} - {pred.away}</span>
         </div>
       </div>
     );

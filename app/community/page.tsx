@@ -254,8 +254,7 @@ function ResultPostCard({ match: m, at }: { match: Match; at: number }) {
             {h.team?.name ?? h.label}
           </span>
           <span className="num font-display text-[26px] font-bold" style={{ color: "var(--gold)" }}>
-            {/* away–home: المضيف يمين في RTL */}
-            {s.away} – {s.home}
+            {s.home} – {s.away}
           </span>
           <span className="flex items-center gap-1.5 text-[14.5px] font-bold text-white">
             {a.team?.name ?? a.label}
