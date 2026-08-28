@@ -297,17 +297,30 @@ export interface LeagueStore {
   addPost: (author: string, text: string) => void;
   likePost: (postId: string) => void;
   setStarters: (matchId: string, teamCode: string, playerIds: string[]) => void;
-  startMatch: (matchId: string) => void;
+  /** بدء المباراة. atSeconds: البدء من ثانية محددة (لو فتحت الكونسول متأخرًا).
+   *  paused: يبدأ متوقفًا (للإدخال اليدوي/المتأخر لمباراة انتهت بلا تسجيل). */
+  startMatch: (matchId: string, opts?: { atSeconds?: number; paused?: boolean }) => void;
   toggleClock: (matchId: string) => void;
   advancePeriod: (matchId: string) => void;
+  /** ضبط ساعة المباراة يدويًا لدقيقة محددة (الأدمن/الطاقم) — للتصحيح أو البدء بوقت مخصص */
+  setClock: (matchId: string, minute: number, running: boolean) => void;
   recordEvent: (
     matchId: string,
     e: Omit<MatchEvent, "id" | "minute" | "period" | "createdAt" | "value"> & {
       value?: number;
+      /** دقيقة يدوية (حدث فائت/إدخال متأخر) — بدل دقيقة الساعة الحالية */
+      minute?: number;
+      period?: MatchEvent["period"];
     },
   ) => MatchEvent;
   removeEvent: (eventId: string) => void; // تراجع فوري (خلال 5 ثوان)
   deleteEventWithReason: (eventId: string, reason: string) => void;
+  /** تعديل حدث (دقيقة/قيمة/ملاحظة/الهدّاف) بسبب — يُعيد حساب النتيجة لو المباراة انتهت/اعتُمدت */
+  editEvent: (
+    eventId: string,
+    patch: { minute?: number; value?: number; note?: string; playerId?: string },
+    reason: string,
+  ) => void;
   endMatch: (matchId: string) => void;
   setReport: (matchId: string, patch: Partial<MatchReport>) => void;
   approveMatch: (matchId: string, pin: string) => boolean;
@@ -1362,15 +1375,52 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
   );
 
   const startMatch = useCallback(
-    (matchId: string) => {
-      const clock: ClockState = { ...freshClock(), running: true, runningSince: Date.now() };
+    (matchId: string, opts?: { atSeconds?: number; paused?: boolean }) => {
+      const at = Math.max(0, Math.round(opts?.atSeconds ?? 0));
+      const running = !opts?.paused;
+      const clock: ClockState = {
+        ...freshClock(),
+        periodSeconds: at,
+        totalSeconds: at,
+        running,
+        runningSince: running ? Date.now() : null,
+      };
       setLive((l) => ({
         ...l,
         statuses: { ...l.statuses, [matchId]: "live" },
         clocks: { ...l.clocks, [matchId]: clock },
       }));
       writeMatch(matchId, { status: "live", clock });
-      pushAudit("بدء مباراة", matchId, "بدأ الشوط الأول");
+      pushAudit(
+        "بدء مباراة",
+        matchId,
+        at > 0
+          ? `بدأ الشوط الأول من الدقيقة ${Math.floor(at / 60) + 1}${opts?.paused ? " (إدخال يدوي)" : ""}`
+          : opts?.paused
+            ? "فُتحت للإدخال اليدوي (الساعة متوقفة)"
+            : "بدأ الشوط الأول",
+      );
+    },
+    [writeMatch, pushAudit],
+  );
+
+  /** ضبط ساعة المباراة يدويًا للدقيقة المعروضة (1 = بداية المباراة) */
+  const setClock = useCallback(
+    (matchId: string, minute: number, running: boolean) => {
+      const c0 = liveRef.current.clocks[matchId] ?? freshClock();
+      const disp = Math.max(1, Math.round(minute));
+      const sec = (disp - 1) * 60;
+      const next: ClockState = {
+        ...c0,
+        period: c0.period === "ended" ? "first" : c0.period,
+        periodSeconds: sec,
+        totalSeconds: sec,
+        running,
+        runningSince: running ? Date.now() : null,
+      };
+      setLive((l) => ({ ...l, clocks: { ...l.clocks, [matchId]: next } }));
+      writeMatch(matchId, { clock: next });
+      pushAudit("ضبط الساعة", matchId, `الساعة ضُبطت على الدقيقة ${disp}`);
     },
     [writeMatch, pushAudit],
   );
@@ -1432,18 +1482,39 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     [writeMatch, pushAudit],
   );
 
+  /** يعيد كتابة النتيجة المخزّنة من الأحداث لو المباراة انتهت/اعتُمدت (تعديل ما بعد المباراة) */
+  const settleScore = useCallback(
+    (matchId: string, events: MatchEvent[]) => {
+      const st = liveRef.current.statuses[matchId];
+      if (st !== "finished" && st !== "approved") return;
+      const match = seedRef.current.matches.find((m) => m.id === matchId);
+      if (!match) return;
+      const score = deriveScore(resolvedSides(match), events);
+      writeMatch(matchId, { home_score: score.home, away_score: score.away });
+    },
+    [resolvedSides, writeMatch],
+  );
+
   const recordEvent = useCallback(
     (
       matchId: string,
       e: Omit<MatchEvent, "id" | "minute" | "period" | "createdAt" | "value"> & {
         value?: number;
+        minute?: number;
+        period?: MatchEvent["period"];
       },
     ): MatchEvent => {
       const l0 = liveRef.current;
       const c = l0.clocks[matchId] ?? freshClock();
       const extra = c.running && c.runningSince ? (Date.now() - c.runningSince) / 1000 : 0;
-      const minute = Math.min(99, Math.floor((c.totalSeconds + extra) / 60) + 1);
-      const period = c.period === "second" || c.period === "extra" ? c.period : "first";
+      // دقيقة يدوية (حدث فائت/إدخال متأخر) تتقدّم على دقيقة الساعة
+      const manual = e.minute != null;
+      const minute = manual
+        ? Math.min(99, Math.max(1, Math.round(e.minute!)))
+        : Math.min(99, Math.floor((c.totalSeconds + extra) / 60) + 1);
+      const period: MatchEvent["period"] =
+        e.period ?? (c.period === "second" || c.period === "extra" ? c.period : "first");
+      const baseSec = manual ? (minute - 1) * 60 : c.totalSeconds + extra;
 
       // كارت "الهدف بهدفين" النشط لهذا الفريق يجعل قيمة الهدف 2 ويُستهلك
       const active = l0.usages.find((u) => u.matchId === matchId && u.status === "approved");
@@ -1458,7 +1529,7 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
       // طرد مؤقت بالدقائق: نثبّت ثانية انتهاء العقوبة على ساعة المباراة الآن
       const penaltyUntilSec =
         e.type === "red" && e.penaltyScope === "minutes" && e.penaltyMinutes
-          ? Math.round(c.totalSeconds + extra + e.penaltyMinutes * 60)
+          ? Math.round(baseSec + e.penaltyMinutes * 60)
           : undefined;
 
       const event: MatchEvent = {
@@ -1516,9 +1587,11 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
           writeUsage({ ...active, status: "applied" }, { minute, appliedAt: now });
         }
       }
+      // لو المباراة انتهت/اعتُمدت (إضافة حدث بعد المباراة) نعيد حساب النتيجة المخزّنة
+      settleScore(matchId, [...l0.events, ...newEvents]);
       return event;
     },
-    [toDbEvent, writeUsage],
+    [toDbEvent, writeUsage, settleScore],
   );
 
   const removeEvent = useCallback(
@@ -1527,14 +1600,18 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
       if (!removed) return;
       // الأحداث المرافقة (طرد الإنذار الثاني) تُحذف مع أصلها — والقاعدة تكرر
       // ذلك تلقائيًا (linked_to on delete cascade)
+      const remaining = liveRef.current.events.filter(
+        (e) => e.id !== eventId && e.linkedTo !== eventId,
+      );
       setLive((l) => ({
         ...l,
         events: l.events.filter((e) => e.id !== eventId && e.linkedTo !== eventId),
       }));
       if (idsRef.current) queueWrite("delete_event", { id: eventId });
       revertCardForEvent(removed);
+      settleScore(removed.matchId, remaining);
     },
-    [revertCardForEvent],
+    [revertCardForEvent, settleScore],
   );
 
   const deleteEventWithReason = useCallback(
@@ -1566,8 +1643,46 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
       }
       revertCardForEvent(removed);
       pushAudit("حذف حدث", eventId, reason);
+      // إعادة حساب النتيجة لو المباراة انتهت/اعتُمدت (حذف هدف بعد المباراة)
+      settleScore(removed.matchId, l0.events.map((e) =>
+        e.id === eventId || e.linkedTo === eventId ? { ...e, deleted: true } : e,
+      ));
     },
-    [revertCardForEvent, pushAudit],
+    [revertCardForEvent, pushAudit, settleScore],
+  );
+
+  const editEvent = useCallback(
+    (
+      eventId: string,
+      patch: { minute?: number; value?: number; note?: string; playerId?: string },
+      reason: string,
+    ) => {
+      const l0 = liveRef.current;
+      const ev = l0.events.find((e) => e.id === eventId);
+      if (!ev) return;
+      const next: MatchEvent = {
+        ...ev,
+        ...(patch.minute != null ? { minute: Math.min(99, Math.max(1, Math.round(patch.minute))) } : {}),
+        ...(patch.value != null ? { value: Math.max(1, Math.round(patch.value)) } : {}),
+        ...(patch.note !== undefined ? { note: patch.note } : {}),
+        ...(patch.playerId !== undefined ? { playerId: patch.playerId } : {}),
+        editedReason: reason,
+      };
+      const nextEvents = l0.events.map((e) => (e.id === eventId ? next : e));
+      setLive((l) => ({ ...l, events: l.events.map((e) => (e.id === eventId ? next : e)) }));
+      if (idsRef.current) {
+        const dbPatch: Record<string, unknown> = { edited_reason: reason };
+        if (patch.minute != null) dbPatch.minute = next.minute;
+        if (patch.value != null) dbPatch.value = next.value;
+        if (patch.note !== undefined) dbPatch.note = patch.note ?? null;
+        if (patch.playerId !== undefined)
+          dbPatch.player_id = patch.playerId ? (idsRef.current.playerByCode[patch.playerId] ?? null) : null;
+        queueWrite("update_events", { rows: [{ id: eventId, patch: dbPatch }] });
+      }
+      pushAudit("تعديل حدث", eventId, reason);
+      settleScore(ev.matchId, nextEvents);
+    },
+    [pushAudit, settleScore],
   );
 
   const endMatch = useCallback(
@@ -1833,9 +1948,11 @@ export function LeagueProvider({ children }: { children: ReactNode }) {
     startMatch,
     toggleClock,
     advancePeriod,
+    setClock,
     recordEvent,
     removeEvent,
     deleteEventWithReason,
+    editEvent,
     endMatch,
     setReport,
     approveMatch,

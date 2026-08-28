@@ -64,6 +64,10 @@ export default function ConsolePage() {
   const [showCards, setShowCards] = useState(false);
   const [showPrep, setShowPrep] = useState(false);
   const [clockNow, setClockNow] = useState(Date.now());
+  // إدخال يدوي: عند تفعيله تُسجَّل الأحداث بدقيقة يحددها المستخدم (حدث فائت/إدخال متأخر)
+  const [manualMode, setManualMode] = useState(false);
+  const [manualMinute, setManualMinute] = useState(1);
+  const [showTime, setShowTime] = useState(false);
   const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -113,7 +117,9 @@ export default function ConsolePage() {
       />
     );
 
-  if (status === "approved")
+  // المباراة المعتمدة مقفولة للجميع إلا الأدمن — الأدمن يدخل في «وضع تعديل»
+  // يقدر يضيف/يعدّل/يحذف أحداثًا والنتيجة تتحدّث تلقائيًا (كله في التدقيق)
+  if (status === "approved" && state.role !== "admin")
     return (
       <CenterMsg
         text="المباراة معتمدة ومقفولة ✓"
@@ -130,6 +136,13 @@ export default function ConsolePage() {
   const score = scoreOf(match.id);
   const activeCard = state.activeCards[match.id];
   const suspendedHere = store.suspensions.filter((s) => s.forMatchId === match.id);
+
+  const isAdmin = state.role === "admin";
+  const postMatch = status === "finished" || status === "approved";
+  // مين يقدر يسجّل الآن: أثناء اللعب (أي طاقم)، أو الأدمن في أي حالة (قبل/بعد المباراة)
+  const canRecordNow = status === "live" || status === "half_time" || isAdmin;
+  // الدقيقة المستخدمة للأحداث: يدوية إن فُعِّلت، وإلا دقيقة الساعة الحالية
+  const eventMinute = manualMode ? manualMinute : undefined;
 
   // زمن الفترة الحالي
   const running = clock!.running && clock!.runningSince;
@@ -174,7 +187,7 @@ export default function ConsolePage() {
   }
 
   function onEventButton(type: EventType) {
-    if (status !== "live" && status !== "half_time") return;
+    if (!canRecordNow) return;
     if (type === "comment") {
       setPending({ kind: "event", type });
       return;
@@ -209,6 +222,7 @@ export default function ConsolePage() {
         teamCode: player.teamCode,
         playerId: player.id,
         type: pending.type,
+        ...(eventMinute != null ? { minute: eventMinute } : {}),
       });
       pushUndo(e);
       setPending(null);
@@ -224,6 +238,7 @@ export default function ConsolePage() {
       type: "red",
       penaltyScope: scope,
       ...(scope === "minutes" ? { penaltyMinutes: minutes } : {}),
+      ...(eventMinute != null ? { minute: eventMinute } : {}),
     });
     pushUndo(e);
     setRedFor(null);
@@ -239,6 +254,7 @@ export default function ConsolePage() {
       playerId: subOut.id,
       secondaryPlayerId: player.id,
       type: "sub",
+      ...(eventMinute != null ? { minute: eventMinute } : {}),
     });
     pushUndo(e);
     setSubOut(null);
@@ -251,6 +267,7 @@ export default function ConsolePage() {
       matchId: match.id,
       teamCode,
       type: pending.type,
+      ...(eventMinute != null ? { minute: eventMinute } : {}),
     });
     pushUndo(e);
     setPending(null);
@@ -433,6 +450,40 @@ export default function ConsolePage() {
         </button>
       </div>
 
+      {/* شريط الوقت والإدخال اليدوي (للطاقم) */}
+      <div className="mx-4 mb-1.5 flex flex-none flex-wrap items-center gap-1.5">
+        <button
+          onClick={() => setShowTime(true)}
+          className="pill flex-none px-2.5 py-1 text-[12.5px] font-semibold"
+          style={{ background: "rgba(255,255,255,.05)", color: "var(--text-2)", border: "1px solid var(--border-soft)" }}
+        >
+          ⏱ الوقت
+        </button>
+        <button
+          onClick={() => setManualMode((v) => !v)}
+          className="pill flex-none px-2.5 py-1 text-[12.5px] font-bold"
+          style={
+            manualMode
+              ? { background: "rgba(224,178,74,.18)", color: "var(--gold-light)", border: "1px solid rgba(224,178,74,.5)" }
+              : { background: "rgba(255,255,255,.05)", color: "var(--text-3)", border: "1px solid var(--border-soft)" }
+          }
+        >
+          ✍️ دقيقة يدوية{manualMode ? " • مفعّلة" : ""}
+        </button>
+        {manualMode ? (
+          <span className="flex flex-none items-center gap-1">
+            <button onClick={() => setManualMinute((m) => Math.max(1, m - 1))} className="h-8 w-8 flex-none rounded-lg text-[16px] font-bold" style={{ background: "rgba(255,255,255,.07)", color: "var(--text-1)" }} aria-label="دقيقة أقل">−</button>
+            <span className="num w-12 text-center font-display text-[15px] font-bold" style={{ color: "var(--gold-light)" }}>د {manualMinute}</span>
+            <button onClick={() => setManualMinute((m) => Math.min(99, m + 1))} className="h-8 w-8 flex-none rounded-lg text-[16px] font-bold" style={{ background: "rgba(224,178,74,.15)", color: "var(--gold-light)" }} aria-label="دقيقة أكثر">+</button>
+          </span>
+        ) : null}
+      </div>
+      {postMatch && isAdmin ? (
+        <div className="mx-4 mb-1.5 flex-none rounded-[10px] px-3 py-1.5 text-[12px] font-bold" style={{ background: "rgba(43,79,194,.18)", color: "#ADC2FF", border: "1px solid rgba(43,79,194,.5)" }}>
+          ✎ وضع التعديل بعد المباراة — أي إضافة/حذف/تعديل يحدّث النتيجة تلقائيًا ويُسجَّل في التدقيق
+        </div>
+      ) : null}
+
       {/* إرشاد الاختيار */}
       {selectingPlayer ? (
         <div
@@ -550,7 +601,15 @@ export default function ConsolePage() {
 
       {/* إنهاء المباراة / تحضير التشكيلة */}
       <div className="flex-none px-3 pb-3 pt-1.5">
-        {status === "finished" ? (
+        {status === "approved" ? (
+          <Link
+            href={`/match/${match.id}`}
+            className="flex h-11 w-full items-center justify-center rounded-[13px] text-[13.5px] font-bold"
+            style={{ background: "rgba(30,127,58,.16)", color: "var(--green-text)", border: "1px solid rgba(30,127,58,.4)" }}
+          >
+            ✓ معتمدة — التعديلات تُحدّث النتيجة تلقائيًا · صفحة المباراة
+          </Link>
+        ) : status === "finished" ? (
           <button onClick={() => setShowEnd(true)} className="btn-gold h-12 w-full text-[15px]">
             نجم المباراة والاعتماد
           </button>
@@ -729,6 +788,60 @@ export default function ConsolePage() {
       {/* ورقة تحضير التشكيلة */}
       {showPrep ? (
         <PrepSheet matchId={match.id} homeCode={homeCode} awayCode={awayCode} onClose={() => setShowPrep(false)} />
+      ) : null}
+
+      {/* ورقة ضبط الوقت / البدء بوقت مخصص / الإدخال المتأخر */}
+      {showTime ? (
+        <Sheet title="⏱ وقت المباراة" onClose={() => setShowTime(false)}>
+          <div className="mb-3 flex items-center justify-center gap-3">
+            <button onClick={() => setManualMinute((m) => Math.max(1, m - 1))} className="h-11 w-11 rounded-[12px] text-[20px] font-bold" style={{ background: "rgba(255,255,255,.07)", color: "var(--text-1)" }}>−</button>
+            <span className="num w-24 text-center font-display text-[30px] font-bold text-white">د {manualMinute}</span>
+            <button onClick={() => setManualMinute((m) => Math.min(99, m + 1))} className="h-11 w-11 rounded-[12px] text-[20px] font-bold" style={{ background: "rgba(224,178,74,.16)", color: "var(--gold-light)" }}>+</button>
+          </div>
+
+          {status === "scheduled" ? (
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={() => {
+                  store.startMatch(match.id, { atSeconds: (manualMinute - 1) * 60 });
+                  setShowTime(false);
+                }}
+                className="btn-gold h-12 w-full text-[14.5px]"
+              >
+                ▶️ ابدأ من الدقيقة {manualMinute} (والساعة تعدّ)
+              </button>
+              <button
+                onClick={() => {
+                  store.startMatch(match.id, { paused: true });
+                  setManualMode(true);
+                  setShowTime(false);
+                }}
+                className="h-12 w-full rounded-[13px] text-[14px] font-bold"
+                style={{ background: "rgba(43,79,194,.2)", color: "#ADC2FF", border: "1px solid rgba(43,79,194,.5)" }}
+              >
+                ⏸ إدخال متأخر (مباراة انتهت) — الساعة متوقفة وتُدخِل الأحداث بدقائقها
+              </button>
+              <p className="mt-1 text-center text-[11.5px]" style={{ color: "var(--text-3)" }}>
+                الإدخال المتأخر يفعّل «الدقيقة اليدوية»: تحدد دقيقة كل حدث ثم تُنهي المباراة وتعتمدها.
+              </p>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={() => {
+                  store.setClock(match.id, manualMinute, clock!.running);
+                  setShowTime(false);
+                }}
+                className="btn-gold h-12 w-full text-[14.5px]"
+              >
+                اضبط الساعة على الدقيقة {manualMinute}
+              </button>
+              <p className="mt-1 text-center text-[11.5px]" style={{ color: "var(--text-3)" }}>
+                لتصحيح الساعة لو فتحت الكونسول متأخرًا أو ضبطها لأي لحظة.
+              </p>
+            </div>
+          )}
+        </Sheet>
       ) : null}
     </div>
   );
@@ -1030,60 +1143,133 @@ function TimelineRow({ e }: { e: MatchEvent }) {
   const store = useLeague();
   const { seed } = store;
   const [confirming, setConfirming] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [minuteDraft, setMinuteDraft] = useState(e.minute);
+  const [valueDraft, setValueDraft] = useState(e.value);
+  const [reason, setReason] = useState("");
   const meta = PRIMARY_EVENTS.concat(MORE_EVENTS).find((x) => x.type === e.type);
   const pName = seed.players.find((p) => p.id === e.playerId)?.name;
+  const isGoal = e.type === "goal";
+  const dirty = minuteDraft !== e.minute || (isGoal && valueDraft !== e.value);
+
+  const save = () => {
+    if (!dirty || !reason.trim()) return;
+    const patch: { minute?: number; value?: number } = {};
+    if (minuteDraft !== e.minute) patch.minute = minuteDraft;
+    if (isGoal && valueDraft !== e.value) patch.value = valueDraft;
+    store.editEvent(e.id, patch, reason.trim());
+    setEditing(false);
+    setReason("");
+  };
+
   return (
-    <div className="flex items-center gap-2 border-b py-2" style={{ borderColor: "var(--border-softer)" }}>
-      <span className="num w-9 text-center font-display text-[13px] font-bold" style={{ color: "var(--text-2)" }}>
-        د {e.minute}
-      </span>
-      <span className="text-[15px]">{meta?.icon ?? "•"}</span>
-      <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-white" style={e.deleted ? { textDecoration: "line-through", opacity: 0.5 } : undefined}>
-        {meta?.label}
-        {e.type === "red" && e.penaltyScope
-          ? e.penaltyScope === "minutes"
-            ? ` ${e.penaltyMinutes} د`
-            : e.penaltyScope === "league"
-              ? " من الدوري"
-              : " باقي المباراة"
-          : ""}
-        {e.value > 1 ? " ×2" : ""} — {pName ?? store.teamByCode(e.teamCode)?.name}
-        {e.note ? ` · ${e.note}` : ""}
-      </span>
-      {!e.deleted ? (
-        confirming ? (
-          <span className="flex flex-wrap justify-end gap-1">
-            {DELETE_REASONS.map((r) => (
-              <button
-                key={r}
-                onClick={() => {
-                  store.deleteEventWithReason(e.id, r);
-                  setConfirming(false);
-                }}
-                className="pill px-2 py-1 text-[11.5px] font-semibold"
-                style={{ background: "rgba(229,72,77,.14)", color: "var(--live)" }}
-              >
-                {r}
-              </button>
-            ))}
-            <button
-              onClick={() => setConfirming(false)}
-              className="pill px-2 py-1 text-[11.5px] font-semibold"
-              style={{ background: "rgba(255,255,255,.08)", color: "var(--text-2)" }}
-            >
-              تراجع
-            </button>
-          </span>
-        ) : (
-          <button onClick={() => setConfirming(true)} className="pill px-2.5 py-1 text-[12px] font-semibold" style={{ background: "rgba(255,255,255,.06)", color: "var(--text-3)" }}>
-            حذف بسبب
-          </button>
-        )
-      ) : (
-        <span className="text-[11.5px]" style={{ color: "var(--text-3)" }}>
-          {e.deletedReason}
+    <div className="flex flex-col gap-1.5 border-b py-2" style={{ borderColor: "var(--border-softer)" }}>
+      <div className="flex items-center gap-2">
+        <span className="num w-9 text-center font-display text-[13px] font-bold" style={{ color: "var(--text-2)" }}>
+          د {e.minute}
         </span>
-      )}
+        <span className="text-[15px]">{meta?.icon ?? "•"}</span>
+        <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-white" style={e.deleted ? { textDecoration: "line-through", opacity: 0.5 } : undefined}>
+          {meta?.label}
+          {e.type === "red" && e.penaltyScope
+            ? e.penaltyScope === "minutes"
+              ? ` ${e.penaltyMinutes} د`
+              : e.penaltyScope === "league"
+                ? " من الدوري"
+                : " باقي المباراة"
+            : ""}
+          {e.value > 1 ? " ×2" : ""} — {pName ?? store.teamByCode(e.teamCode)?.name}
+          {e.note ? ` · ${e.note}` : ""}
+          {e.editedReason ? <span style={{ color: "var(--gold-light)" }}> · مُعدّل</span> : null}
+        </span>
+        {!e.deleted ? (
+          confirming ? (
+            <span className="flex flex-wrap justify-end gap-1">
+              {DELETE_REASONS.map((r) => (
+                <button
+                  key={r}
+                  onClick={() => {
+                    store.deleteEventWithReason(e.id, r);
+                    setConfirming(false);
+                  }}
+                  className="pill px-2 py-1 text-[11.5px] font-semibold"
+                  style={{ background: "rgba(229,72,77,.14)", color: "var(--live)" }}
+                >
+                  {r}
+                </button>
+              ))}
+              <button
+                onClick={() => setConfirming(false)}
+                className="pill px-2 py-1 text-[11.5px] font-semibold"
+                style={{ background: "rgba(255,255,255,.08)", color: "var(--text-2)" }}
+              >
+                تراجع
+              </button>
+            </span>
+          ) : (
+            <span className="flex flex-none gap-1">
+              <button
+                onClick={() => {
+                  setMinuteDraft(e.minute);
+                  setValueDraft(e.value);
+                  setReason("");
+                  setEditing((v) => !v);
+                }}
+                className="pill px-2.5 py-1 text-[12px] font-semibold"
+                style={{ background: "rgba(224,178,74,.12)", color: "var(--gold-light)" }}
+              >
+                ✏️ تعديل
+              </button>
+              <button onClick={() => setConfirming(true)} className="pill px-2.5 py-1 text-[12px] font-semibold" style={{ background: "rgba(255,255,255,.06)", color: "var(--text-3)" }}>
+                حذف
+              </button>
+            </span>
+          )
+        ) : (
+          <span className="text-[11.5px]" style={{ color: "var(--text-3)" }}>
+            {e.deletedReason}
+          </span>
+        )}
+      </div>
+
+      {editing && !e.deleted ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-[10px] p-2" style={{ background: "rgba(255,255,255,.03)", border: "1px solid var(--border-soft)" }}>
+          <span className="flex items-center gap-1">
+            <span className="text-[11.5px]" style={{ color: "var(--text-3)" }}>دقيقة</span>
+            <button onClick={() => setMinuteDraft((m) => Math.max(1, m - 1))} className="h-8 w-8 rounded-lg text-[15px] font-bold" style={{ background: "rgba(255,255,255,.07)", color: "var(--text-1)" }}>−</button>
+            <span className="num w-8 text-center font-display text-[14px] font-bold text-white">{minuteDraft}</span>
+            <button onClick={() => setMinuteDraft((m) => Math.min(99, m + 1))} className="h-8 w-8 rounded-lg text-[15px] font-bold" style={{ background: "rgba(224,178,74,.15)", color: "var(--gold-light)" }}>+</button>
+          </span>
+          {isGoal ? (
+            <span className="flex items-center gap-1">
+              <span className="text-[11.5px]" style={{ color: "var(--text-3)" }}>قيمة</span>
+              {[1, 2].map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setValueDraft(v)}
+                  className="h-8 rounded-lg px-2.5 text-[12.5px] font-bold"
+                  style={valueDraft === v ? { background: "var(--gold)", color: "#1a1200" } : { background: "rgba(255,255,255,.06)", color: "var(--text-2)" }}
+                >
+                  ×{v}
+                </button>
+              ))}
+            </span>
+          ) : null}
+          <input
+            value={reason}
+            onChange={(ev) => setReason(ev.target.value)}
+            placeholder="سبب التعديل"
+            className="h-8 w-0 min-w-0 flex-1 rounded-lg px-2 text-[12.5px] text-white"
+            style={{ background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.14)" }}
+          />
+          <button onClick={save} disabled={!dirty || !reason.trim()} className="h-8 flex-none rounded-lg px-3 text-[12px] font-bold disabled:opacity-35" style={{ background: "var(--gold)", color: "#1a1200" }}>
+            حفظ
+          </button>
+          <button onClick={() => { setEditing(false); setReason(""); }} className="h-8 flex-none rounded-lg px-2 text-[12px] font-bold" style={{ background: "rgba(255,255,255,.06)", color: "var(--text-3)" }}>
+            ✕
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
