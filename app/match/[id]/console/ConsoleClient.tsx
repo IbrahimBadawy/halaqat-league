@@ -468,34 +468,15 @@ export default function ConsolePage() {
               <div className="px-1 text-[12.5px]" style={{ color: "var(--text-3)" }}>
                 البدلاء
               </div>
-              {bench.map((p) => {
-                const suspended = store.isSuspended(p.id, match.id);
-                return (
-                  <button
-                    key={p.id}
-                    disabled={suspended}
-                    onClick={() => (subOut && subOut.teamCode === code ? onBenchTapForSub(p) : undefined)}
-                    className="flex h-[42px] flex-none items-center gap-2 rounded-[12px] px-2"
-                    style={{
-                      border:
-                        subOut && subOut.teamCode === code && !suspended
-                          ? "1.5px dashed var(--gold)"
-                          : suspended
-                            ? "1px dashed rgba(229,72,77,.4)"
-                            : "1px dashed rgba(201,209,230,.25)",
-                      opacity: suspended ? 0.45 : subOut && subOut.teamCode === code ? 1 : 0.75,
-                    }}
-                  >
-                    <span className="num flex h-[26px] w-[26px] flex-none items-center justify-center rounded-lg font-display text-[13px] font-bold" style={{ background: "rgba(255,255,255,.06)", color: "var(--text-2)" }}>
-                      {p.shirt}
-                    </span>
-                    <span className="truncate text-[13.5px] font-medium" style={{ color: "var(--text-2)" }}>
-                      {p.name}
-                    </span>
-                    {suspended ? <span className="ms-auto flex-none text-[12px]">🚫</span> : null}
-                  </button>
-                );
-              })}
+              {bench.map((p) => (
+                <BenchChip
+                  key={p.id}
+                  p={p}
+                  matchId={match.id}
+                  isSubTarget={!!(subOut && subOut.teamCode === code)}
+                  onSub={() => onBenchTapForSub(p)}
+                />
+              ))}
               {/* حدث على الفريق كله */}
               {pending?.kind === "event" && pending.type !== "comment" ? (
                 <button
@@ -768,6 +749,11 @@ function PlayerChip({
 }) {
   const store = useLeague();
   const { state } = store;
+  const isAdmin = state.role === "admin";
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(p.name);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   const playerEvents = state.events.filter(
     (e) => e.matchId === matchId && e.playerId === p.id && !e.deleted,
   );
@@ -785,39 +771,256 @@ function PlayerChip({
       (e.penaltyScope === "minutes" ? (e.penaltyUntilSec ?? 0) > nowSec : true),
   );
   const sentOff = redBlocks || suspended;
+
+  const save = async () => {
+    const name = draft.trim();
+    if (!name || name === p.name) {
+      setEditing(false);
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    const m = await store.updatePlayer(p.id, { name });
+    setBusy(false);
+    if (m) {
+      setErr(m);
+      return;
+    }
+    setEditing(false);
+  };
+
+  const boxStyle = {
+    background: "linear-gradient(135deg,var(--surface-1),var(--surface-2))",
+    border: highlight ? "1.5px solid rgba(224,178,74,.55)" : "1px solid var(--border-soft)",
+  } as const;
+
+  // وضع تعديل الاسم (أدمن) — يحل محل الشريحة كلها مؤقتًا
+  if (editing) {
+    return (
+      <div className="flex h-12 flex-none items-center gap-1.5 rounded-[12px] px-2" style={boxStyle}>
+        <span
+          className="num flex h-[30px] w-[30px] flex-none items-center justify-center rounded-[9px] font-display text-[15px] font-bold"
+          style={{ background: "rgba(43,79,194,.3)", color: "var(--text-1)" }}
+        >
+          {p.shirt}
+        </span>
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          autoFocus
+          aria-label="اسم اللاعب"
+          className="h-8 w-0 min-w-0 flex-1 rounded-[8px] px-2 text-[13.5px] font-medium text-white"
+          style={{ background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.16)" }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") save();
+            if (e.key === "Escape") setEditing(false);
+          }}
+        />
+        <button
+          onClick={save}
+          disabled={busy || !draft.trim() || draft.trim() === p.name}
+          className="h-8 flex-none rounded-[8px] px-2.5 text-[12px] font-bold disabled:opacity-35"
+          style={{ background: "var(--gold)", color: "#1a1200" }}
+        >
+          {busy ? "…" : "حفظ"}
+        </button>
+        <button
+          onClick={() => {
+            setEditing(false);
+            setErr(null);
+            setDraft(p.name);
+          }}
+          aria-label="إلغاء"
+          className="h-8 flex-none rounded-[8px] px-2 text-[12px] font-bold"
+          style={{ background: "rgba(255,255,255,.06)", color: "var(--text-3)" }}
+        >
+          ✕
+        </button>
+        {err ? (
+          <span className="flex-none text-[10.5px] font-bold" style={{ color: "var(--live)" }} title={err}>
+            !
+          </span>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
-    <button
-      onClick={onTap}
-      disabled={sentOff}
-      className="flex h-12 flex-none items-center gap-2 rounded-[12px] px-2 text-start"
+    <div className="flex h-12 flex-none items-stretch rounded-[12px]" style={{ ...boxStyle, opacity: sentOff ? 0.45 : 1 }}>
+      <button
+        onClick={onTap}
+        disabled={sentOff}
+        className="flex min-w-0 flex-1 items-center gap-2 rounded-[12px] px-2 text-start"
+      >
+        <span
+          className="num flex h-[30px] w-[30px] flex-none items-center justify-center rounded-[9px] font-display text-[15px] font-bold"
+          style={{ background: "rgba(43,79,194,.3)", color: "var(--text-1)" }}
+        >
+          {p.shirt}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-white">
+          {p.name}
+        </span>
+        {sentOff ? (
+          <span className="flex-none text-[13px]">{suspended ? "🚫" : "🟥"}</span>
+        ) : (
+          <>
+            {yellows > 0 ? <span className="flex-none text-[12px]">🟨</span> : null}
+            {goals > 0 ? (
+              <span className="num flex-none text-[12px] font-bold" style={{ color: "var(--gold)" }}>
+                ⚽{goals}
+              </span>
+            ) : null}
+          </>
+        )}
+      </button>
+      {isAdmin ? (
+        <button
+          onClick={() => {
+            setDraft(p.name);
+            setErr(null);
+            setEditing(true);
+          }}
+          aria-label="تعديل اسم اللاعب"
+          className="flex w-9 flex-none items-center justify-center rounded-e-[12px] text-[13px]"
+          style={{ borderInlineStart: "1px solid var(--border-soft)", color: "var(--text-3)" }}
+        >
+          ✏️
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/** لاعب على دكة البدلاء: يُنقر للتبديل عند اختيار الخارج، وللأدمن زر ✏️ لتعديل الاسم. */
+function BenchChip({
+  p,
+  matchId,
+  isSubTarget,
+  onSub,
+}: {
+  p: Player;
+  matchId: string;
+  isSubTarget: boolean;
+  onSub: () => void;
+}) {
+  const store = useLeague();
+  const { state } = store;
+  const isAdmin = state.role === "admin";
+  const suspended = store.isSuspended(p.id, matchId);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(p.name);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const save = async () => {
+    const name = draft.trim();
+    if (!name || name === p.name) {
+      setEditing(false);
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    const m = await store.updatePlayer(p.id, { name });
+    setBusy(false);
+    if (m) {
+      setErr(m);
+      return;
+    }
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div
+        className="flex h-[42px] flex-none items-center gap-1.5 rounded-[12px] px-2"
+        style={{ border: "1px dashed rgba(201,209,230,.25)" }}
+      >
+        <span className="num flex h-[26px] w-[26px] flex-none items-center justify-center rounded-lg font-display text-[13px] font-bold" style={{ background: "rgba(255,255,255,.06)", color: "var(--text-2)" }}>
+          {p.shirt}
+        </span>
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          autoFocus
+          aria-label="اسم اللاعب"
+          className="h-7 w-0 min-w-0 flex-1 rounded-[8px] px-2 text-[13px] font-medium text-white"
+          style={{ background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.16)" }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") save();
+            if (e.key === "Escape") setEditing(false);
+          }}
+        />
+        <button
+          onClick={save}
+          disabled={busy || !draft.trim() || draft.trim() === p.name}
+          className="h-7 flex-none rounded-[8px] px-2.5 text-[11.5px] font-bold disabled:opacity-35"
+          style={{ background: "var(--gold)", color: "#1a1200" }}
+        >
+          {busy ? "…" : "حفظ"}
+        </button>
+        <button
+          onClick={() => {
+            setEditing(false);
+            setErr(null);
+            setDraft(p.name);
+          }}
+          aria-label="إلغاء"
+          className="h-7 flex-none rounded-[8px] px-2 text-[11.5px] font-bold"
+          style={{ background: "rgba(255,255,255,.06)", color: "var(--text-3)" }}
+        >
+          ✕
+        </button>
+        {err ? (
+          <span className="flex-none text-[10.5px] font-bold" style={{ color: "var(--live)" }} title={err}>
+            !
+          </span>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="flex h-[42px] flex-none items-stretch rounded-[12px]"
       style={{
-        background: "linear-gradient(135deg,var(--surface-1),var(--surface-2))",
-        border: highlight ? "1.5px solid rgba(224,178,74,.55)" : "1px solid var(--border-soft)",
-        opacity: sentOff ? 0.45 : 1,
+        border:
+          isSubTarget && !suspended
+            ? "1.5px dashed var(--gold)"
+            : suspended
+              ? "1px dashed rgba(229,72,77,.4)"
+              : "1px dashed rgba(201,209,230,.25)",
+        opacity: suspended ? 0.45 : isSubTarget ? 1 : 0.75,
       }}
     >
-      <span
-        className="num flex h-[30px] w-[30px] flex-none items-center justify-center rounded-[9px] font-display text-[15px] font-bold"
-        style={{ background: "rgba(43,79,194,.3)", color: "var(--text-1)" }}
+      <button
+        disabled={suspended}
+        onClick={() => (isSubTarget && !suspended ? onSub() : undefined)}
+        className="flex min-w-0 flex-1 items-center gap-2 rounded-[12px] px-2"
       >
-        {p.shirt}
-      </span>
-      <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-white">
-        {p.name}
-      </span>
-      {sentOff ? (
-        <span className="flex-none text-[13px]">{suspended ? "🚫" : "🟥"}</span>
-      ) : (
-        <>
-          {yellows > 0 ? <span className="flex-none text-[12px]">🟨</span> : null}
-          {goals > 0 ? (
-            <span className="num flex-none text-[12px] font-bold" style={{ color: "var(--gold)" }}>
-              ⚽{goals}
-            </span>
-          ) : null}
-        </>
-      )}
-    </button>
+        <span className="num flex h-[26px] w-[26px] flex-none items-center justify-center rounded-lg font-display text-[13px] font-bold" style={{ background: "rgba(255,255,255,.06)", color: "var(--text-2)" }}>
+          {p.shirt}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-start text-[13.5px] font-medium" style={{ color: "var(--text-2)" }}>
+          {p.name}
+        </span>
+        {suspended ? <span className="flex-none text-[12px]">🚫</span> : null}
+      </button>
+      {isAdmin ? (
+        <button
+          onClick={() => {
+            setDraft(p.name);
+            setErr(null);
+            setEditing(true);
+          }}
+          aria-label="تعديل اسم اللاعب"
+          className="flex w-9 flex-none items-center justify-center rounded-e-[12px] text-[13px]"
+          style={{ borderInlineStart: "1px dashed rgba(201,209,230,.25)", color: "var(--text-3)" }}
+        >
+          ✏️
+        </button>
+      ) : null}
+    </div>
   );
 }
 
