@@ -121,7 +121,7 @@ export default function AdminPage() {
                       {formatSlot(m.slot)}
                     </span>
                     <span className="min-w-0 flex-1 truncate text-[14px] font-bold">
-                      {h.team?.name ?? h.label} <span className="num" style={{ color: "#9A7420" }}>{s.home}–{s.away}</span>{" "}
+                      {h.team?.name ?? h.label} <span className="num" style={{ color: "#9A7420" }}>{s.away}–{s.home}</span>{" "}
                       {a.team?.name ?? a.label}
                     </span>
                     {st === "finished"
@@ -146,7 +146,7 @@ export default function AdminPage() {
                   return (
                     <div key={m.id} className="flex items-center gap-3 border-b py-2" style={{ borderColor: "#E3E7F2" }}>
                       <span className="min-w-0 flex-1 truncate text-[13.5px] font-semibold">
-                        {h.team?.name} <span className="num" style={{ color: "#9A7420" }}>{s.home}–{s.away}</span> {a.team?.name}
+                        {h.team?.name} <span className="num" style={{ color: "#9A7420" }}>{s.away}–{s.home}</span> {a.team?.name}
                       </span>
                       <button
                         onClick={() => store.reopenMatch(m.id)}

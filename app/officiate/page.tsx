@@ -60,7 +60,7 @@ export default function OfficiatePage() {
                 <Shield code={h.team?.code ?? "؟"} size={24} gold={false} />
                 <span className="truncate">{h.team?.name ?? h.label}</span>
                 <span className="num" style={{ color: "var(--gold)" }}>
-                  {st === "scheduled" ? "×" : `${s.home} – ${s.away}`}
+                  {st === "scheduled" ? "×" : `${s.away} – ${s.home}`}
                 </span>
                 <span className="truncate">{a.team?.name ?? a.label}</span>
                 <Shield code={a.team?.code ?? "؟"} size={24} gold={false} />
