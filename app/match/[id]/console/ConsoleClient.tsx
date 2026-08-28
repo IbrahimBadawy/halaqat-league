@@ -68,6 +68,8 @@ export default function ConsolePage() {
   const [manualMode, setManualMode] = useState(false);
   const [manualMinute, setManualMinute] = useState(1);
   const [showTime, setShowTime] = useState(false);
+  // هدف عكسي: الهدف القادم يُحتسب للفريق الخصم للاعب المختار
+  const [ownGoal, setOwnGoal] = useState(false);
   const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -188,6 +190,7 @@ export default function ConsolePage() {
 
   function onEventButton(type: EventType) {
     if (!canRecordNow) return;
+    setOwnGoal(false);
     if (type === "comment") {
       setPending({ kind: "event", type });
       return;
@@ -217,15 +220,24 @@ export default function ConsolePage() {
         setPending(null);
         return;
       }
+      // هدف عكسي: يُحتسب لفريق الخصم، مع تسجيل اسم من أدخله في مرماه
+      const isOwn = pending.type === "goal" && ownGoal;
+      const creditTeam = isOwn
+        ? player.teamCode === homeCode
+          ? awayCode
+          : homeCode
+        : player.teamCode;
       const e = store.recordEvent(match.id, {
         matchId: match.id,
-        teamCode: player.teamCode,
+        teamCode: creditTeam,
         playerId: player.id,
         type: pending.type,
+        ...(isOwn ? { subtype: "own_goal", note: `هدف عكسي (${player.name})` } : {}),
         ...(eventMinute != null ? { minute: eventMinute } : {}),
       });
       pushUndo(e);
       setPending(null);
+      setOwnGoal(false);
       if (navigator.vibrate) navigator.vibrate(30);
     }
   }
@@ -494,13 +506,29 @@ export default function ConsolePage() {
             ? `اختر البديل الداخل مكان ${subOut.name}`
             : pending?.kind === "sub_out"
               ? "تبديل: اختر اللاعب الخارج"
-              : `اختر اللاعب — ${PRIMARY_EVENTS.concat(MORE_EVENTS).find((e) => pending?.kind === "event" && e.type === pending.type)?.label ?? ""}`}
+              : ownGoal && pending?.kind === "event" && pending.type === "goal"
+                ? "↩️ هدف عكسي: اختر اللاعب الذي أدخله في مرماه (يُحتسب للخصم)"
+                : `اختر اللاعب — ${PRIMARY_EVENTS.concat(MORE_EVENTS).find((e) => pending?.kind === "event" && e.type === pending.type)?.label ?? ""}`}
+          {pending?.kind === "event" && pending.type === "goal" ? (
+            <button
+              onClick={() => setOwnGoal((v) => !v)}
+              className="ms-auto rounded-lg px-2 py-0.5 text-[12px] font-bold"
+              style={
+                ownGoal
+                  ? { background: "rgba(229,72,77,.9)", color: "#fff" }
+                  : { background: "rgba(255,255,255,.1)", color: "var(--text-2)" }
+              }
+            >
+              ↩️ عكسي{ownGoal ? " ✓" : ""}
+            </button>
+          ) : null}
           <button
             onClick={() => {
               setPending(null);
               setSubOut(null);
+              setOwnGoal(false);
             }}
-            className="ms-auto rounded-lg px-2 py-0.5 text-[12px]"
+            className={`${pending?.kind === "event" && pending.type === "goal" ? "" : "ms-auto"} rounded-lg px-2 py-0.5 text-[12px]`}
             style={{ background: "rgba(255,255,255,.1)", color: "var(--text-2)" }}
           >
             إلغاء
@@ -873,7 +901,7 @@ function PlayerChip({
     (e) => e.matchId === matchId && e.playerId === p.id && !e.deleted,
   );
   const goals = playerEvents
-    .filter((e) => e.type === "goal")
+    .filter((e) => e.type === "goal" && e.subtype !== "own_goal")
     .reduce((s, e) => s + e.value, 0);
   const yellows = playerEvents.filter((e) => e.type === "yellow").length;
   const suspended = store.isSuspended(p.id, matchId);
@@ -1170,7 +1198,7 @@ function TimelineRow({ e }: { e: MatchEvent }) {
         </span>
         <span className="text-[15px]">{meta?.icon ?? "•"}</span>
         <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-white" style={e.deleted ? { textDecoration: "line-through", opacity: 0.5 } : undefined}>
-          {meta?.label}
+          {e.type === "goal" && e.subtype === "own_goal" ? "هدف عكسي ↩️" : meta?.label}
           {e.type === "red" && e.penaltyScope
             ? e.penaltyScope === "minutes"
               ? ` ${e.penaltyMinutes} د`

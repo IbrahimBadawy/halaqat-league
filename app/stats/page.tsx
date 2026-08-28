@@ -45,7 +45,7 @@ export default function StatsPage() {
       .map(([pid, total]) => ({ player: playerName(pid), total }));
   }
 
-  const scorers = leaderboard((e) => e.type === "goal", (e) => e.value);
+  const scorers = leaderboard((e) => e.type === "goal" && e.subtype !== "own_goal", (e) => e.value);
   // الصناعة تُحسب من secondaryPlayerId
   const assistTotals = new Map<string, number>();
   for (const e of events) {

@@ -65,6 +65,8 @@ export default function MatchPage() {
     home.team &&
     away.team &&
     status !== "approved";
+  // الأدمن يقدر يفتح الكونسول لمباراة معتمدة للتعديل (النتيجة تتحدّث تلقائيًا)
+  const canAdminEdit = state.role === "admin" && !!home.team && !!away.team && status === "approved";
 
   const playerName = (id?: string) =>
     seed.players.find((p) => p.id === id)?.name ?? "";
@@ -93,6 +95,14 @@ export default function MatchPage() {
             className="btn-gold flex h-11 items-center justify-center px-3 text-[13.5px]"
           >
             {status === "scheduled" ? "بدء التسجيل" : "الكونسول"}
+          </Link>
+        ) : canAdminEdit ? (
+          <Link
+            href={`/match/${match.id}/console`}
+            className="flex h-11 items-center justify-center rounded-[13px] px-3 text-[13.5px] font-bold"
+            style={{ background: "rgba(43,79,194,.2)", color: "#ADC2FF", border: "1px solid rgba(43,79,194,.5)" }}
+          >
+            ✏️ تعديل
           </Link>
         ) : (
           <span className="w-11" />
@@ -256,7 +266,9 @@ export default function MatchPage() {
     const meta = EVENT_META[e.type];
     const title =
       e.type === "goal"
-        ? `⚽ هدف${e.value > 1 ? " مضاعف (×2)" : ""} — ${playerName(e.playerId) || teamName(e.teamCode)}`
+        ? e.subtype === "own_goal"
+          ? `⚽ هدف عكسي — ${playerName(e.playerId) || "لاعب"} (لصالح ${teamName(e.teamCode)})`
+          : `⚽ هدف${e.value > 1 ? " مضاعف (×2)" : ""} — ${playerName(e.playerId) || teamName(e.teamCode)}`
         : e.type === "sub"
           ? `تبديل — خروج ${playerName(e.playerId)} ودخول ${playerName(e.secondaryPlayerId)}`
           : e.type === "comment"

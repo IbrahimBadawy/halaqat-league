@@ -168,7 +168,7 @@ export default function TeamPage() {
 
   const allEvents = matches.flatMap((m) => eventsOf(m.id)).filter((e) => !e.deleted);
   const goalsBy = (pid: string) =>
-    allEvents.filter((e) => e.type === "goal" && e.playerId === pid).reduce((s, e) => s + e.value, 0);
+    allEvents.filter((e) => e.type === "goal" && e.subtype !== "own_goal" && e.playerId === pid).reduce((s, e) => s + e.value, 0);
   const cardsUsed = state.usedCards.filter((u) => u.teamCode === team.code);
 
   return (
