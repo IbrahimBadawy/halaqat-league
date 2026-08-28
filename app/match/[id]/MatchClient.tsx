@@ -185,6 +185,17 @@ export default function MatchPage() {
             ) : null}
           </button>
         ) : null}
+
+        {/* زر تعديل واضح للأدمن على المباراة المعتمدة (النتيجة تتحدّث تلقائيًا) */}
+        {canAdminEdit ? (
+          <Link
+            href={`/match/${match.id}/console`}
+            className="mt-3 flex h-12 w-full items-center justify-center gap-2 rounded-[13px] text-[15px] font-bold"
+            style={{ background: "rgba(43,79,194,.2)", color: "#ADC2FF", border: "1px solid rgba(43,79,194,.5)" }}
+          >
+            ✏️ تعديل النتيجة والأحداث (أدمن)
+          </Link>
+        ) : null}
       </div>
 
       {/* التبويبات */}
