@@ -190,7 +190,8 @@ function LiveHero({ m }: { m: Match }) {
               className="num gold-shimmer font-display font-bold"
               style={{ fontSize: "clamp(64px, 11vw, 118px)", lineHeight: 1 }}
             >
-              {s.home} – {s.away}
+              {/* away–home: المضيف يمين في RTL */}
+              {s.away} – {s.home}
             </div>
             <div
               className="num font-display font-bold text-white"

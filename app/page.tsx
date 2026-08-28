@@ -165,7 +165,8 @@ export default function HomePage() {
                   </span>
                 </span>
                 <span className="num gold-shimmer flex-none font-display text-[48px] font-bold tracking-wide">
-                  {scoreOf(lm.id).home} – {scoreOf(lm.id).away}
+                  {/* away–home: المضيف يمين في RTL */}
+                  {scoreOf(lm.id).away} – {scoreOf(lm.id).home}
                 </span>
                 <span className="flex flex-1 flex-col items-center gap-1.5">
                   <Shield code={resolveSide(lm.away).team?.code ?? "؟"} size={46} />
@@ -278,7 +279,8 @@ export default function HomePage() {
                     {h.team?.name ?? h.label} × {a.team?.name ?? a.label}
                   </span>
                   <span className="num font-display text-[22px] font-bold" style={{ color: "var(--gold)" }}>
-                    {s.home} – {s.away}
+                    {/* away–home: المضيف يمين في RTL */}
+                    {s.away} – {s.home}
                   </span>
                   <span className="flex items-center gap-1.5 text-[11.5px] font-medium" style={{ color: "var(--text-3)" }}>
                     <span className="num">{formatSlot(m.slot)}</span>
