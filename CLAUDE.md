@@ -4,6 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # دوري الحلقات — Halaqat League Platform
 
+> **الحالة الحالية والتسليم بين الجلسات: [`docs/HANDOFF.md`](docs/HANDOFF.md) — اقرأه أولًا** (أجزاء «Phase 0 — local-first» تحت صارت قديمة: الموقع الآن على Supabase).
+
 ## What this is
 
 Mobile-first Arabic (RTL) PWA for running the real community football league
